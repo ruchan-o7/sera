@@ -1,0 +1,22 @@
+---
+BasedOnStyle: Google
+AlignArrayOfStructures: Right
+AlignConsecutiveAssignments:
+  Enabled: true
+  AlignFunctionPointers: true
+AlignConsecutiveBitFields:
+  Enabled: true
+AlignConsecutiveDeclarations:
+  Enabled: true
+  AlignFunctionPointers: true
+AlignConsecutiveMacros:
+  Enabled: true
+  AlignCompound: true
+AlignConsecutiveShortCaseStatements:
+  Enabled: true
+IndentAccessModifiers: true
+IndentCaseBlocks: true
+NamespaceIndentation: All
+SortIncludes: Never
+Standard: c++17
+

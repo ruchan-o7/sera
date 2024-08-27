@@ -1,0 +1,2 @@
+pushd ..
+cmake --build build
