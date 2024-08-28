@@ -338,16 +338,20 @@ static void FrameRender(ImGui_ImplVulkanH_Window *wd, ImDrawData *draw_data) {
     check_vk_result(err);
   }
   {
-    VkClearValue          clearValue{};
-    VkRenderPassBeginInfo info = {};
-    info.sType                 = VK_STRUCTURE_TYPE_RENDER_PASS_BEGIN_INFO;
-    info.renderPass            = g_Renderpass;
-    info.framebuffer           = frameData->Framebuffer;
+    std::array<VkClearValue, 2> clearValues{};
+    clearValues[0].color = {
+        {0.0f, 0.0f, 0.0f, 1.0f}
+    };
+    clearValues[1].depthStencil = {1.0f, 0};
+    VkRenderPassBeginInfo info  = {};
+    info.sType                  = VK_STRUCTURE_TYPE_RENDER_PASS_BEGIN_INFO;
+    info.renderPass             = g_Renderpass;
+    info.framebuffer            = frameData->Framebuffer;
     // g_Window->FrameBuffers[g_Window->ImageCount];  // fd->Framebuffer;
     info.renderArea.extent.width  = g_Window->Width;
     info.renderArea.extent.height = g_Window->Height;
-    info.clearValueCount          = 1;
-    info.pClearValues             = &clearValue;
+    info.clearValueCount          = clearValues.size();
+    info.pClearValues             = clearValues.data();
     vkCmdBeginRenderPass(frameData->CommandBuffer, &info,
                          VK_SUBPASS_CONTENTS_INLINE);
   }
@@ -367,6 +371,7 @@ static void FrameRender(ImGui_ImplVulkanH_Window *wd, ImDrawData *draw_data) {
     VkRect2D scissor{};
     scissor.offset = {0, 0};
     scissor.extent = {300, 300};
+    vkCmdSetScissor(frameData->CommandBuffer, 0, 1, &scissor);
 
     vkCmdDraw(frameData->CommandBuffer, 3, 1, 0, 0);
   }
