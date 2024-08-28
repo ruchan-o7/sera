@@ -1,6 +1,8 @@
 #include "Application.h"
 #include "Log.h"
 #include "Backend/VulkanInstance.h"
+#include "Backend/VulkanPhysicalDevice.h"
+#include "Backend/VulkanDevice.h"
 
 //
 // Adapted from Dear ImGui Vulkan example
@@ -42,17 +44,17 @@ extern bool g_ApplicationRunning;
 #define IMGUI_VULKAN_DEBUG_REPORT
 #endif
 
-static VkAllocationCallbacks   *g_Allocator              = NULL;
-static Sera::VulkanInstance    *g_Instance               = nullptr;
-static VkPhysicalDevice         g_PhysicalDevice         = VK_NULL_HANDLE;
-static VkDevice                 g_Device                 = VK_NULL_HANDLE;
-static uint32_t                 g_QueueFamily            = (uint32_t)-1;
-static VkQueue                  g_Queue                  = VK_NULL_HANDLE;
-static VkDebugReportCallbackEXT g_DebugReport            = VK_NULL_HANDLE;
-static VkPipelineCache          g_PipelineCache          = VK_NULL_HANDLE;
-static VkDescriptorPool         g_DescriptorPool         = VK_NULL_HANDLE;
-static VkPipeline               g_GraphicPipeline        = VK_NULL_HANDLE;
-static VkPipelineLayout         g_GraphicsPipelineLayout = VK_NULL_HANDLE;
+static VkAllocationCallbacks      *g_Allocator              = NULL;
+static Sera::VulkanInstance       *g_Instance               = nullptr;
+static Sera::VulkanPhysicalDevice *g_PhysicalDevice         = nullptr;
+static Sera::VulkanDevice         *g_Device                 = nullptr;
+static uint32_t                    g_QueueFamily            = (uint32_t)-1;
+static VkQueue                     g_Queue                  = VK_NULL_HANDLE;
+static VkDebugReportCallbackEXT    g_DebugReport            = VK_NULL_HANDLE;
+static VkPipelineCache             g_PipelineCache          = VK_NULL_HANDLE;
+static VkDescriptorPool            g_DescriptorPool         = VK_NULL_HANDLE;
+static VkPipeline                  g_GraphicPipeline        = VK_NULL_HANDLE;
+static VkPipelineLayout            g_GraphicsPipelineLayout = VK_NULL_HANDLE;
 
 static ImGui_ImplVulkanH_Window g_MainWindowData;
 static int                      g_MinImageCount    = 3;
@@ -85,45 +87,18 @@ static void SetupVulkan(const char **extensions, uint32_t extensions_count) {
   }
 
   // Select GPU
-  g_PhysicalDevice = g_Instance->SelectPhysicalDevice();
-
+  g_PhysicalDevice =
+      new Sera::VulkanPhysicalDevice(g_Instance->SelectPhysicalDevice());
   // Select graphics queue family
   {
-    uint32_t count;
-    vkGetPhysicalDeviceQueueFamilyProperties(g_PhysicalDevice, &count, NULL);
-    VkQueueFamilyProperties *queues = (VkQueueFamilyProperties *)malloc(
-        sizeof(VkQueueFamilyProperties) * count);
-    vkGetPhysicalDeviceQueueFamilyProperties(g_PhysicalDevice, &count, queues);
-    for (uint32_t i = 0; i < count; i++)
-      if (queues[i].queueFlags & VK_QUEUE_GRAPHICS_BIT) {
-        g_QueueFamily = i;
-        break;
-      }
-    free(queues);
-    IM_ASSERT(g_QueueFamily != (uint32_t)-1);
+    g_PhysicalDevice->SelectGraphicsQueueFamily();
+    g_QueueFamily = g_PhysicalDevice->queueFamilyIndex;
   }
-
   // Create Logical Device (with 1 queue)
   {
-    int                     device_extension_count = 1;
-    const char             *device_extensions[]    = {"VK_KHR_swapchain"};
-    const float             queue_priority[]       = {1.0f};
-    VkDeviceQueueCreateInfo queue_info[1]          = {};
-    queue_info[0].sType            = VK_STRUCTURE_TYPE_DEVICE_QUEUE_CREATE_INFO;
-    queue_info[0].queueFamilyIndex = g_QueueFamily;
-    queue_info[0].queueCount       = 1;
-    queue_info[0].pQueuePriorities = queue_priority;
-    VkDeviceCreateInfo create_info = {};
-    create_info.sType              = VK_STRUCTURE_TYPE_DEVICE_CREATE_INFO;
-    create_info.queueCreateInfoCount =
-        sizeof(queue_info) / sizeof(queue_info[0]);
-    create_info.pQueueCreateInfos       = queue_info;
-    create_info.enabledExtensionCount   = device_extension_count;
-    create_info.ppEnabledExtensionNames = device_extensions;
-    err =
-        vkCreateDevice(g_PhysicalDevice, &create_info, g_Allocator, &g_Device);
-    check_vk_result(err);
-    vkGetDeviceQueue(g_Device, g_QueueFamily, 0, &g_Queue);
+    g_Device =
+        new Sera::VulkanDevice(g_PhysicalDevice, g_Allocator, g_QueueFamily);
+    g_Queue = g_Device->queue;
   }
 
   // Create Descriptor Pool
@@ -147,7 +122,7 @@ static void SetupVulkan(const char **extensions, uint32_t extensions_count) {
     pool_info.maxSets       = 1000 * IM_ARRAYSIZE(pool_sizes);
     pool_info.poolSizeCount = (uint32_t)IM_ARRAYSIZE(pool_sizes);
     pool_info.pPoolSizes    = pool_sizes;
-    err = vkCreateDescriptorPool(g_Device, &pool_info, g_Allocator,
+    err = vkCreateDescriptorPool(g_Device->device, &pool_info, g_Allocator,
                                  &g_DescriptorPool);
     check_vk_result(err);
   }
@@ -161,8 +136,8 @@ static void SetupVulkanWindow(ImGui_ImplVulkanH_Window *wd,
 
   // Check for WSI support
   VkBool32 res;
-  vkGetPhysicalDeviceSurfaceSupportKHR(g_PhysicalDevice, g_QueueFamily,
-                                       wd->Surface, &res);
+  vkGetPhysicalDeviceSurfaceSupportKHR(g_PhysicalDevice->physicalDevice,
+                                       g_QueueFamily, wd->Surface, &res);
   if (res != VK_TRUE) {
     fprintf(stderr, "Error no WSI support on physical device 0\n");
     exit(-1);
@@ -175,7 +150,7 @@ static void SetupVulkanWindow(ImGui_ImplVulkanH_Window *wd,
   const VkColorSpaceKHR requestSurfaceColorSpace =
       VK_COLORSPACE_SRGB_NONLINEAR_KHR;
   wd->SurfaceFormat = ImGui_ImplVulkanH_SelectSurfaceFormat(
-      g_PhysicalDevice, wd->Surface, requestSurfaceImageFormat,
+      g_PhysicalDevice->physicalDevice, wd->Surface, requestSurfaceImageFormat,
       (size_t)IM_ARRAYSIZE(requestSurfaceImageFormat),
       requestSurfaceColorSpace);
 
@@ -188,19 +163,19 @@ static void SetupVulkanWindow(ImGui_ImplVulkanH_Window *wd,
   VkPresentModeKHR present_modes[] = {VK_PRESENT_MODE_FIFO_KHR};
 #endif
   wd->PresentMode = ImGui_ImplVulkanH_SelectPresentMode(
-      g_PhysicalDevice, wd->Surface, &present_modes[0],
+      g_PhysicalDevice->physicalDevice, wd->Surface, &present_modes[0],
       IM_ARRAYSIZE(present_modes));
   // printf("[vulkan] Selected PresentMode = %d\n", wd->PresentMode);
 
   // Create SwapChain, RenderPass, Framebuffer, etc.
   IM_ASSERT(g_MinImageCount >= 2);
   ImGui_ImplVulkanH_CreateOrResizeWindow(
-      g_Instance->instance, g_PhysicalDevice, g_Device, wd, g_QueueFamily,
-      g_Allocator, width, height, g_MinImageCount);
+      g_Instance->instance, g_PhysicalDevice->physicalDevice, g_Device->device,
+      wd, g_QueueFamily, g_Allocator, width, height, g_MinImageCount);
 }
 
 static void CleanupVulkan() {
-  vkDestroyDescriptorPool(g_Device, g_DescriptorPool, g_Allocator);
+  vkDestroyDescriptorPool(g_Device->device, g_DescriptorPool, g_Allocator);
 
 #ifdef IMGUI_VULKAN_DEBUG_REPORT
   // Remove the debug report callback
@@ -210,7 +185,7 @@ static void CleanupVulkan() {
   vkDestroyDebugReportCallbackEXT(g_Instance, g_DebugReport, g_Allocator);
 #endif  // IMGUI_VULKAN_DEBUG_REPORT
 
-  vkDestroyDevice(g_Device, g_Allocator);
+  vkDestroyDevice(g_Device->device, g_Allocator);
   vkDestroyInstance(g_Instance->instance, g_Allocator);
 }
 
@@ -229,7 +204,7 @@ void read_file(const char *path, std::vector<char> &out) {
 }
 
 static void CleanupVulkanWindow() {
-  ImGui_ImplVulkanH_DestroyWindow(g_Instance->instance, g_Device,
+  ImGui_ImplVulkanH_DestroyWindow(g_Instance->instance, g_Device->device,
                                   &g_MainWindowData, g_Allocator);
 }
 
@@ -240,7 +215,7 @@ static void FrameRender(ImGui_ImplVulkanH_Window *wd, ImDrawData *draw_data) {
       wd->FrameSemaphores[wd->SemaphoreIndex].ImageAcquiredSemaphore;
   VkSemaphore render_complete_semaphore =
       wd->FrameSemaphores[wd->SemaphoreIndex].RenderCompleteSemaphore;
-  err = vkAcquireNextImageKHR(g_Device, wd->Swapchain, UINT64_MAX,
+  err = vkAcquireNextImageKHR(g_Device->device, wd->Swapchain, UINT64_MAX,
                               image_acquired_semaphore, VK_NULL_HANDLE,
                               &wd->FrameIndex);
   if (err == VK_ERROR_OUT_OF_DATE_KHR || err == VK_SUBOPTIMAL_KHR) {
@@ -254,11 +229,11 @@ static void FrameRender(ImGui_ImplVulkanH_Window *wd, ImDrawData *draw_data) {
   ImGui_ImplVulkanH_Frame *fd = &wd->Frames[wd->FrameIndex];
   {
     err = vkWaitForFences(
-        g_Device, 1, &fd->Fence, VK_TRUE,
+        g_Device->device, 1, &fd->Fence, VK_TRUE,
         UINT64_MAX);  // wait indefinitely instead of periodically checking
     check_vk_result(err);
 
-    err = vkResetFences(g_Device, 1, &fd->Fence);
+    err = vkResetFences(g_Device->device, 1, &fd->Fence);
     check_vk_result(err);
   }
 
@@ -273,13 +248,13 @@ static void FrameRender(ImGui_ImplVulkanH_Window *wd, ImDrawData *draw_data) {
     // they're tied to the swapchain image index
     auto &allocatedCommandBuffers = s_AllocatedCommandBuffers[wd->FrameIndex];
     if (allocatedCommandBuffers.size() > 0) {
-      vkFreeCommandBuffers(g_Device, fd->CommandPool,
+      vkFreeCommandBuffers(g_Device->device, fd->CommandPool,
                            (uint32_t)allocatedCommandBuffers.size(),
                            allocatedCommandBuffers.data());
       allocatedCommandBuffers.clear();
     }
 
-    err = vkResetCommandPool(g_Device, fd->CommandPool, 0);
+    err = vkResetCommandPool(g_Device->device, fd->CommandPool, 0);
     check_vk_result(err);
     VkCommandBufferBeginInfo info = {};
     info.sType                    = VK_STRUCTURE_TYPE_COMMAND_BUFFER_BEGIN_INFO;
@@ -456,8 +431,8 @@ namespace Sera {
     ImGui_ImplGlfw_InitForVulkan(m_WindowHandle, true);
     ImGui_ImplVulkan_InitInfo init_info = {};
     init_info.Instance                  = g_Instance->instance;
-    init_info.PhysicalDevice            = g_PhysicalDevice;
-    init_info.Device                    = g_Device;
+    init_info.PhysicalDevice            = g_PhysicalDevice->physicalDevice;
+    init_info.Device                    = g_Device->device;
     init_info.QueueFamily               = g_QueueFamily;
     init_info.Queue                     = g_Queue;
     init_info.PipelineCache             = g_PipelineCache;
@@ -484,7 +459,7 @@ namespace Sera {
       VkCommandPool   command_pool   = wd->Frames[wd->FrameIndex].CommandPool;
       VkCommandBuffer command_buffer = wd->Frames[wd->FrameIndex].CommandBuffer;
 
-      err = vkResetCommandPool(g_Device, command_pool, 0);
+      err = vkResetCommandPool(g_Device->device, command_pool, 0);
       check_vk_result(err);
       VkCommandBufferBeginInfo begin_info = {};
       begin_info.sType = VK_STRUCTURE_TYPE_COMMAND_BUFFER_BEGIN_INFO;
@@ -504,7 +479,7 @@ namespace Sera {
       err = vkQueueSubmit(g_Queue, 1, &end_info, VK_NULL_HANDLE);
       check_vk_result(err);
 
-      err = vkDeviceWaitIdle(g_Device);
+      err = vkDeviceWaitIdle(g_Device->device);
       check_vk_result(err);
       ImGui_ImplVulkan_DestroyFontsTexture();
       // ImGui_ImplVulkan_DestroyFontUploadObjects();
@@ -517,7 +492,7 @@ namespace Sera {
         ci.codeSize           = code.size();
         ci.pCode              = reinterpret_cast<const uint32_t *>(code.data());
         VkShaderModule module = {};
-        if (vkCreateShaderModule(g_Device, &ci, nullptr, &module)) {
+        if (vkCreateShaderModule(g_Device->device, &ci, nullptr, &module)) {
           SR_CORE_ERROR("Could not load Shader");
         }
         return module;
@@ -613,7 +588,7 @@ namespace Sera {
       pipelineLayoutInfo.setLayoutCount         = 0;
       pipelineLayoutInfo.pushConstantRangeCount = 0;
 
-      if (vkCreatePipelineLayout(g_Device, &pipelineLayoutInfo, nullptr,
+      if (vkCreatePipelineLayout(g_Device->device, &pipelineLayoutInfo, nullptr,
                                  &g_GraphicsPipelineLayout) != VK_SUCCESS) {
         SR_CORE_ERROR("Failed to create pipeline layout");
         return;
@@ -635,14 +610,14 @@ namespace Sera {
       pipelineInfo.subpass             = 0;
       pipelineInfo.basePipelineHandle  = VK_NULL_HANDLE;
 
-      if (vkCreateGraphicsPipelines(g_Device, VK_NULL_HANDLE, 1, &pipelineInfo,
-                                    nullptr,
+      if (vkCreateGraphicsPipelines(g_Device->device, VK_NULL_HANDLE, 1,
+                                    &pipelineInfo, nullptr,
                                     &g_GraphicPipeline) != VK_SUCCESS) {
         SR_CORE_ERROR("Failed to create graphics pipeline");
       }
 
-      vkDestroyShaderModule(g_Device, fragModule, nullptr);
-      vkDestroyShaderModule(g_Device, vertModule, nullptr);
+      vkDestroyShaderModule(g_Device->device, fragModule, nullptr);
+      vkDestroyShaderModule(g_Device->device, vertModule, nullptr);
     }
   }
 
@@ -652,7 +627,7 @@ namespace Sera {
     m_LayerStack.clear();
 
     // Cleanup
-    VkResult err = vkDeviceWaitIdle(g_Device);
+    VkResult err = vkDeviceWaitIdle(g_Device->device);
     check_vk_result(err);
 
     // Free resources in queue
@@ -694,9 +669,9 @@ namespace Sera {
         if (width > 0 && height > 0) {
           ImGui_ImplVulkan_SetMinImageCount(g_MinImageCount);
           ImGui_ImplVulkanH_CreateOrResizeWindow(
-              g_Instance->instance, g_PhysicalDevice, g_Device,
-              &g_MainWindowData, g_QueueFamily, g_Allocator, width, height,
-              g_MinImageCount);
+              g_Instance->instance, g_PhysicalDevice->physicalDevice,
+              g_Device->device, &g_MainWindowData, g_QueueFamily, g_Allocator,
+              width, height, g_MinImageCount);
           g_MainWindowData.FrameIndex = 0;
 
           // Clear allocated command buffers from here since entire pool is
@@ -805,9 +780,11 @@ namespace Sera {
 
   VkInstance Application::GetInstance() { return g_Instance->instance; }
 
-  VkPhysicalDevice Application::GetPhysicalDevice() { return g_PhysicalDevice; }
+  VkPhysicalDevice Application::GetPhysicalDevice() {
+    return g_PhysicalDevice->physicalDevice;
+  }
 
-  VkDevice Application::GetDevice() { return g_Device; }
+  VkDevice Application::GetDevice() { return g_Device->device; }
 
   VkCommandBuffer Application::GetCommandBuffer(bool begin) {
     ImGui_ImplVulkanH_Window *wd = &g_MainWindowData;
@@ -826,7 +803,7 @@ namespace Sera {
     // FIXME: Fix this command buffer allocation
     VkCommandBuffer
          command_buffer;  //= s_AllocatedCommandBuffers[wd->FrameIndex];
-    auto err = vkAllocateCommandBuffers(g_Device, &cmdBufAllocateInfo,
+    auto err = vkAllocateCommandBuffers(g_Device->device, &cmdBufAllocateInfo,
                                         &command_buffer);
 
     VkCommandBufferBeginInfo begin_info = {};
@@ -853,16 +830,17 @@ namespace Sera {
     fenceCreateInfo.sType             = VK_STRUCTURE_TYPE_FENCE_CREATE_INFO;
     fenceCreateInfo.flags             = 0;
     VkFence fence;
-    err = vkCreateFence(g_Device, &fenceCreateInfo, nullptr, &fence);
+    err = vkCreateFence(g_Device->device, &fenceCreateInfo, nullptr, &fence);
     check_vk_result(err);
 
     err = vkQueueSubmit(g_Queue, 1, &end_info, fence);
     check_vk_result(err);
 
-    err = vkWaitForFences(g_Device, 1, &fence, VK_TRUE, DEFAULT_FENCE_TIMEOUT);
+    err = vkWaitForFences(g_Device->device, 1, &fence, VK_TRUE,
+                          DEFAULT_FENCE_TIMEOUT);
     check_vk_result(err);
 
-    vkDestroyFence(g_Device, fence, nullptr);
+    vkDestroyFence(g_Device->device, fence, nullptr);
   }
 
   void Application::SubmitResourceFree(std::function<void()> &&func) {
