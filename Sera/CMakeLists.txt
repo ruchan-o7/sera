@@ -9,6 +9,7 @@ file(GLOB_RECURSE
 	SERA_SOURCES 
 		src/*.cpp
 		src/Input/*.cpp
+		src/Backend/*.cpp
 )
 set(IMGUI_DIR "${CMAKE_SOURCE_DIR}/vendor/imgui")
 set(IMGUI_SRCS 
@@ -53,3 +54,11 @@ add_custom_command(TARGET "${PROJECT_NAME}"
 elseif()
 message("DONT FORGET TO COMPILE SHADERS")
 endif()
+
+# Macros for build configs
+add_compile_definitions(
+	$<$<CONFIG:Debug>:SR_DEBUG>
+)
+add_compile_definitions(
+	$<$<CONFIG:Release>:SR_RELEASE>
+)
