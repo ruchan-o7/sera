@@ -1,3 +1,4 @@
+#pragma once
 #include <vulkan/vulkan.h>
 namespace Sera {
   // Loads the debug utils functions and initialized the debug callback.
