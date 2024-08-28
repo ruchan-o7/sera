@@ -9,7 +9,6 @@
 #include "vulkan/vulkan_core.h"
 #include <fstream>
 #include <imgui_internal.h>
-#include <stdexcept>
 #include <stdio.h>   // printf, fprintf
 #include <stdlib.h>  // abort
 
@@ -42,16 +41,17 @@ extern bool g_ApplicationRunning;
 #define IMGUI_VULKAN_DEBUG_REPORT
 #endif
 
-static VkAllocationCallbacks   *g_Allocator       = NULL;
-static VkInstance               g_Instance        = VK_NULL_HANDLE;
-static VkPhysicalDevice         g_PhysicalDevice  = VK_NULL_HANDLE;
-static VkDevice                 g_Device          = VK_NULL_HANDLE;
-static uint32_t                 g_QueueFamily     = (uint32_t)-1;
-static VkQueue                  g_Queue           = VK_NULL_HANDLE;
-static VkDebugReportCallbackEXT g_DebugReport     = VK_NULL_HANDLE;
-static VkPipelineCache          g_PipelineCache   = VK_NULL_HANDLE;
-static VkDescriptorPool         g_DescriptorPool  = VK_NULL_HANDLE;
-static VkPipeline               g_GraphicPipeline = VK_NULL_HANDLE;
+static VkAllocationCallbacks   *g_Allocator              = NULL;
+static VkInstance               g_Instance               = VK_NULL_HANDLE;
+static VkPhysicalDevice         g_PhysicalDevice         = VK_NULL_HANDLE;
+static VkDevice                 g_Device                 = VK_NULL_HANDLE;
+static uint32_t                 g_QueueFamily            = (uint32_t)-1;
+static VkQueue                  g_Queue                  = VK_NULL_HANDLE;
+static VkDebugReportCallbackEXT g_DebugReport            = VK_NULL_HANDLE;
+static VkPipelineCache          g_PipelineCache          = VK_NULL_HANDLE;
+static VkDescriptorPool         g_DescriptorPool         = VK_NULL_HANDLE;
+static VkPipeline               g_GraphicPipeline        = VK_NULL_HANDLE;
+static VkPipelineLayout         g_GraphicsPipelineLayout = VK_NULL_HANDLE;
 
 static ImGui_ImplVulkanH_Window g_MainWindowData;
 static int                      g_MinImageCount    = 3;
@@ -303,16 +303,17 @@ static void CleanupVulkan() {
 }
 
 void read_file(const char *path, std::vector<char> &out) {
-  std::ifstream stream{path, std::ios::ate | std::ios::binary};
-  if (!stream.is_open()) {
-    stream.close();
-    throw new std::runtime_error("Could not open file");
+  std::ifstream fileStream{path, std::ios::ate | std::ios::binary};
+  if (!fileStream.is_open()) {
+    SR_CORE_ERROR("Could not open file: {0}", path);
+    fileStream.close();
+    return;
   }
-  auto fileSize = stream.tellg();
-  out.reserve(fileSize);
-  stream.seekg(0);
-  stream.read(out.data(), fileSize);
-  stream.close();
+  size_t fileSize = (size_t)fileStream.tellg();
+  out.resize(fileSize);
+  fileStream.seekg(0);
+  fileStream.read(out.data(), fileSize);
+  fileStream.close();
 }
 
 static void CleanupVulkanWindow() {
@@ -386,7 +387,24 @@ static void FrameRender(ImGui_ImplVulkanH_Window *wd, ImDrawData *draw_data) {
     vkCmdBeginRenderPass(fd->CommandBuffer, &info, VK_SUBPASS_CONTENTS_INLINE);
   }
   // DRAW COMMANDS
-  {}
+  {
+    vkCmdBindPipeline(fd->CommandBuffer, VK_PIPELINE_BIND_POINT_GRAPHICS,
+                      g_GraphicPipeline);
+    VkViewport viewport{};
+    viewport.x        = 0.0f;
+    viewport.y        = 0.0f;
+    viewport.width    = static_cast<float>(300);
+    viewport.height   = static_cast<float>(300);
+    viewport.minDepth = 0.0f;
+    viewport.maxDepth = 1.0f;
+    vkCmdSetViewport(fd->CommandBuffer, 0, 1, &viewport);
+
+    VkRect2D scissor{};
+    scissor.offset = {0, 0};
+    scissor.extent = {300, 300};
+
+    vkCmdDraw(fd->CommandBuffer, 3, 1, 0, 0);
+  }
 
   // Record dear imgui primitives into command buffer
   ImGui_ImplVulkan_RenderDrawData(draw_data, fd->CommandBuffer);
@@ -460,7 +478,7 @@ namespace Sera {
     // Setup GLFW window
     glfwSetErrorCallback(glfw_error_callback);
     if (!glfwInit()) {
-      SR_CORE_ERROR("Could not initialize GLFW!");
+      SR_CORE_CRITICAL("Could not initialize GLFW!");
       return;
     }
 
@@ -471,7 +489,7 @@ namespace Sera {
 
     // Setup Vulkan
     if (!glfwVulkanSupported()) {
-      SR_CORE_ERROR("GLFW: Vulkan not supported");
+      SR_CORE_CRITICAL("GLFW: Vulkan not supported");
       return;
     }
     uint32_t     extensions_count = 0;
@@ -595,8 +613,8 @@ namespace Sera {
       std::vector<char> vertShaderCode;
       std::vector<char> fragShaderCode;
 
-      read_file("assets/shaders/triangle-vert.spv", vertShaderCode);
-      read_file("assets/shaders/triangle-frag.spv", fragShaderCode);
+      read_file("Assets/shaders/triangle-vert.spv", vertShaderCode);
+      read_file("Assets/shaders/triangle-frag.spv", fragShaderCode);
 
       auto vertModule = create_shader_module(vertShaderCode);
       auto fragModule = create_shader_module(fragShaderCode);
@@ -617,6 +635,99 @@ namespace Sera {
 
       VkPipelineShaderStageCreateInfo shaderStages[] = {vertShaderStageInfo,
                                                         fragShaderStageInfo};
+      VkPipelineVertexInputStateCreateInfo vertexInputInfo{};
+      vertexInputInfo.sType =
+          VK_STRUCTURE_TYPE_PIPELINE_VERTEX_INPUT_STATE_CREATE_INFO;
+      vertexInputInfo.vertexBindingDescriptionCount   = 0;
+      vertexInputInfo.vertexAttributeDescriptionCount = 0;
+
+      VkPipelineInputAssemblyStateCreateInfo inputAssembly{};
+      inputAssembly.sType =
+          VK_STRUCTURE_TYPE_PIPELINE_INPUT_ASSEMBLY_STATE_CREATE_INFO;
+      inputAssembly.topology = VK_PRIMITIVE_TOPOLOGY_TRIANGLE_LIST;
+      inputAssembly.primitiveRestartEnable = VK_FALSE;
+
+      VkPipelineViewportStateCreateInfo viewportState{};
+      viewportState.sType =
+          VK_STRUCTURE_TYPE_PIPELINE_VIEWPORT_STATE_CREATE_INFO;
+      viewportState.viewportCount = 1;
+      viewportState.scissorCount  = 1;
+
+      VkPipelineRasterizationStateCreateInfo rasterizer{};
+      rasterizer.sType =
+          VK_STRUCTURE_TYPE_PIPELINE_RASTERIZATION_STATE_CREATE_INFO;
+      rasterizer.depthClampEnable        = VK_FALSE;
+      rasterizer.rasterizerDiscardEnable = VK_FALSE;
+      rasterizer.polygonMode             = VK_POLYGON_MODE_FILL;
+      rasterizer.lineWidth               = 1.0f;
+      rasterizer.cullMode                = VK_CULL_MODE_BACK_BIT;
+      rasterizer.frontFace               = VK_FRONT_FACE_CLOCKWISE;
+      rasterizer.depthBiasEnable         = VK_FALSE;
+
+      VkPipelineMultisampleStateCreateInfo multisampling{};
+      multisampling.sType =
+          VK_STRUCTURE_TYPE_PIPELINE_MULTISAMPLE_STATE_CREATE_INFO;
+      multisampling.sampleShadingEnable  = VK_FALSE;
+      multisampling.rasterizationSamples = VK_SAMPLE_COUNT_1_BIT;
+
+      VkPipelineColorBlendAttachmentState colorBlendAttachment{};
+      colorBlendAttachment.colorWriteMask =
+          VK_COLOR_COMPONENT_R_BIT | VK_COLOR_COMPONENT_G_BIT |
+          VK_COLOR_COMPONENT_B_BIT | VK_COLOR_COMPONENT_A_BIT;
+      colorBlendAttachment.blendEnable = VK_FALSE;
+
+      VkPipelineColorBlendStateCreateInfo colorBlending{};
+      colorBlending.sType =
+          VK_STRUCTURE_TYPE_PIPELINE_COLOR_BLEND_STATE_CREATE_INFO;
+      colorBlending.logicOpEnable     = VK_FALSE;
+      colorBlending.logicOp           = VK_LOGIC_OP_COPY;
+      colorBlending.attachmentCount   = 1;
+      colorBlending.pAttachments      = &colorBlendAttachment;
+      colorBlending.blendConstants[0] = 0.0f;
+      colorBlending.blendConstants[1] = 0.0f;
+      colorBlending.blendConstants[2] = 0.0f;
+      colorBlending.blendConstants[3] = 0.0f;
+
+      std::vector<VkDynamicState> dynamicStates = {VK_DYNAMIC_STATE_VIEWPORT,
+                                                   VK_DYNAMIC_STATE_SCISSOR};
+      VkPipelineDynamicStateCreateInfo dynamicState{};
+      dynamicState.sType = VK_STRUCTURE_TYPE_PIPELINE_DYNAMIC_STATE_CREATE_INFO;
+      dynamicState.dynamicStateCount =
+          static_cast<uint32_t>(dynamicStates.size());
+      dynamicState.pDynamicStates = dynamicStates.data();
+
+      VkPipelineLayoutCreateInfo pipelineLayoutInfo{};
+      pipelineLayoutInfo.sType = VK_STRUCTURE_TYPE_PIPELINE_LAYOUT_CREATE_INFO;
+      pipelineLayoutInfo.setLayoutCount         = 0;
+      pipelineLayoutInfo.pushConstantRangeCount = 0;
+
+      if (vkCreatePipelineLayout(g_Device, &pipelineLayoutInfo, nullptr,
+                                 &g_GraphicsPipelineLayout) != VK_SUCCESS) {
+        SR_CORE_ERROR("Failed to create pipeline layout");
+        return;
+      }
+
+      VkGraphicsPipelineCreateInfo pipelineInfo{};
+      pipelineInfo.sType      = VK_STRUCTURE_TYPE_GRAPHICS_PIPELINE_CREATE_INFO;
+      pipelineInfo.stageCount = 2;
+      pipelineInfo.pStages    = shaderStages;
+      pipelineInfo.pVertexInputState   = &vertexInputInfo;
+      pipelineInfo.pInputAssemblyState = &inputAssembly;
+      pipelineInfo.pViewportState      = &viewportState;
+      pipelineInfo.pRasterizationState = &rasterizer;
+      pipelineInfo.pMultisampleState   = &multisampling;
+      pipelineInfo.pColorBlendState    = &colorBlending;
+      pipelineInfo.pDynamicState       = &dynamicState;
+      pipelineInfo.layout              = g_GraphicsPipelineLayout;
+      pipelineInfo.renderPass          = wd->RenderPass;
+      pipelineInfo.subpass             = 0;
+      pipelineInfo.basePipelineHandle  = VK_NULL_HANDLE;
+
+      if (vkCreateGraphicsPipelines(g_Device, VK_NULL_HANDLE, 1, &pipelineInfo,
+                                    nullptr,
+                                    &g_GraphicPipeline) != VK_SUCCESS) {
+        SR_CORE_ERROR("Failed to create graphics pipeline");
+      }
 
       vkDestroyShaderModule(g_Device, fragModule, nullptr);
       vkDestroyShaderModule(g_Device, vertModule, nullptr);
@@ -713,8 +824,8 @@ namespace Sera {
         // When using ImGuiDockNodeFlags_PassthruCentralNode, DockSpace() will
         // render our background and handle the pass-thru hole, so we ask
         // Begin() to not render a background.
-        if (dockspace_flags & ImGuiDockNodeFlags_PassthruCentralNode)
-          window_flags |= ImGuiWindowFlags_NoBackground;
+        // if (dockspace_flags & ImGuiDockNodeFlags_PassthruCentralNode)
+        //   window_flags |= ImGuiWindowFlags_NoBackground;
 
         // Important: note that we proceed even if Begin() returns false (aka
         // window is collapsed). This is because we want to keep our DockSpace()
