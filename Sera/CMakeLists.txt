@@ -30,7 +30,7 @@ else()
 	add_library(${PROJECT_NAME} "${SERA_SOURCES};${IMGUI_SRCS};${IMGUI_BACKEND}")
 endif()
 
-target_link_libraries(Sera PUBLIC glfw spdlog glm "${Vulkan_LIBRARIES}")
+target_link_libraries("${PROJECT_NAME}" PUBLIC glfw spdlog glm "${Vulkan_LIBRARIES}")
 
 target_include_directories("${PROJECT_NAME}" 
 	PUBLIC
@@ -42,3 +42,14 @@ target_include_directories("${PROJECT_NAME}"
 	"${CMAKE_SOURCE_DIR}/vendor/stb"
 	"${Vulkan_INCLUDE_DIRS}"
 )
+# automatic shader recompiling with source code
+if(WIN32)
+add_custom_command(TARGET "${PROJECT_NAME}"
+	POST_BUILD DEPENDS "${PROJECT_NAME}"
+	COMMAND "compile.bat"
+	WORKING_DIRECTORY "${CMAKE_SOURCE_DIR}/Assets/shaders/" 
+	COMMENT "Compiling basic triangle shaders"
+)
+elseif()
+message("DONT FORGET TO COMPILE SHADERS")
+endif()
