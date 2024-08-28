@@ -2,3 +2,8 @@ build
 .cache
 .vscode
 
+Sera.log
+imgui.ini
+
+Assets/shaders/triangle-frag.spv
+Assets/shaders/triangle-vert.spv
