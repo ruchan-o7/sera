@@ -14,10 +14,18 @@ namespace Sera {
 
       layers.resize(LayerCount);
       res = vkEnumerateInstanceLayerProperties(&LayerCount, layers.data());
-      if (res != VK_SUCCESS) SR_CORE_ERROR("Failed to enumerate extensions");
+      if (res != VK_SUCCESS) SR_CORE_ERROR("Failed to query layers");
+      SR_CORE_TRACE("Available layers:");
+      for (auto& l : layers) {
+        SR_CORE_TRACE("\t {0}:", l.layerName);
+      }
     }
     if (!EnumerateInstanceExtension(nullptr, extensions))
       SR_CORE_ERROR("Failed to enumerate instance extensions");
+    SR_CORE_TRACE("Available extensions:");
+    for (auto& l : extensions) {
+      SR_CORE_TRACE("\t {0}:", l.extensionName);
+    }
     std::vector<const char*> instanceExtensions;
     if (IsExtensionAvailable(extensions, VK_KHR_SURFACE_EXTENSION_NAME)) {
       instanceExtensions.push_back(VK_KHR_SURFACE_EXTENSION_NAME);
@@ -75,9 +83,9 @@ namespace Sera {
     appInfo.engineVersion      = instanceSpecs.engineVersion;
     appInfo.apiVersion         = instanceSpecs.apiVersion;
     VkInstanceCreateInfo instanceCI{};
-    instanceCI.sType = VK_STRUCTURE_TYPE_INSTANCE_CREATE_INFO;
-    instanceCI.pNext = nullptr;  // Pointer to an extension-specific structure.
-    instanceCI.flags = 0;
+    instanceCI.sType            = VK_STRUCTURE_TYPE_INSTANCE_CREATE_INFO;
+    instanceCI.pNext            = instanceSpecs.pNext;
+    instanceCI.flags            = 0;
     instanceCI.pApplicationInfo = &appInfo;
     instanceCI.enabledExtensionCount =
         static_cast<uint32_t>(instanceExtensions.size());

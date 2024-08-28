@@ -14,7 +14,8 @@ namespace Sera {
           std::vector<const char*> additionalExtensions;
           std::vector<const char*> additionalLayers;
           // you can set this false in release mode
-          bool enableValidation = true;
+          bool  enableValidation = true;
+          void* pNext            = nullptr;
       };
       VulkanInstance(Specs specs);
 

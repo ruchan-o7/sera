@@ -7,13 +7,16 @@
 //
 // Adapted from Dear ImGui Vulkan example
 //
+#include "Window.h"
 #include "backends/imgui_impl_glfw.h"
 #include "backends/imgui_impl_vulkan.h"
+#include "glm/trigonometric.hpp"
 #include "vulkan/vulkan_core.h"
 #include <fstream>
 #include <imgui_internal.h>
 #include <stdio.h>   // printf, fprintf
 #include <stdlib.h>  // abort
+#include <array>
 
 #define GLFW_INCLUDE_NONE
 #define GLFW_INCLUDE_VULKAN
@@ -48,6 +51,7 @@ static VkAllocationCallbacks      *g_Allocator              = NULL;
 static Sera::VulkanInstance       *g_Instance               = nullptr;
 static Sera::VulkanPhysicalDevice *g_PhysicalDevice         = nullptr;
 static Sera::VulkanDevice         *g_Device                 = nullptr;
+static Sera::Window               *g_Window                 = nullptr;
 static uint32_t                    g_QueueFamily            = (uint32_t)-1;
 static VkQueue                     g_Queue                  = VK_NULL_HANDLE;
 static VkDebugReportCallbackEXT    g_DebugReport            = VK_NULL_HANDLE;
@@ -55,6 +59,7 @@ static VkPipelineCache             g_PipelineCache          = VK_NULL_HANDLE;
 static VkDescriptorPool            g_DescriptorPool         = VK_NULL_HANDLE;
 static VkPipeline                  g_GraphicPipeline        = VK_NULL_HANDLE;
 static VkPipelineLayout            g_GraphicsPipelineLayout = VK_NULL_HANDLE;
+static VkRenderPass                g_Renderpass             = VK_NULL_HANDLE;
 
 static ImGui_ImplVulkanH_Window g_MainWindowData;
 static int                      g_MinImageCount    = 3;
@@ -82,7 +87,9 @@ static void SetupVulkan(const char **extensions, uint32_t extensions_count) {
   // Create Vulkan Instance
   {
     Sera::VulkanInstance::Specs instanceSpecs;
-    instanceSpecs.additionalExtensions.push_back("VK_EXT_debug_report");
+    instanceSpecs.additionalExtensions.push_back(
+        VK_EXT_DEBUG_UTILS_EXTENSION_NAME);
+
     g_Instance = new Sera::VulkanInstance(instanceSpecs);
   }
 
@@ -96,9 +103,10 @@ static void SetupVulkan(const char **extensions, uint32_t extensions_count) {
   }
   // Create Logical Device (with 1 queue)
   {
-    g_Device =
-        new Sera::VulkanDevice(g_PhysicalDevice, g_Allocator, g_QueueFamily);
-    g_Queue = g_Device->queue;
+    std::vector<const char *> ext;
+    g_Device = new Sera::VulkanDevice(g_PhysicalDevice, g_Allocator,
+                                      g_QueueFamily, ext);
+    g_Queue  = g_Device->queue;
   }
 
   // Create Descriptor Pool
@@ -127,7 +135,70 @@ static void SetupVulkan(const char **extensions, uint32_t extensions_count) {
     check_vk_result(err);
   }
 }
+static void SetupRenderpass() {
+  VkAttachmentDescription colorAttachment{};
+  colorAttachment.format         = g_Window->SurfaceFormat.format;
+  colorAttachment.samples        = VK_SAMPLE_COUNT_1_BIT;
+  colorAttachment.loadOp         = VK_ATTACHMENT_LOAD_OP_CLEAR;
+  colorAttachment.storeOp        = VK_ATTACHMENT_STORE_OP_STORE;
+  colorAttachment.stencilLoadOp  = VK_ATTACHMENT_LOAD_OP_DONT_CARE;
+  colorAttachment.stencilStoreOp = VK_ATTACHMENT_STORE_OP_DONT_CARE;
+  colorAttachment.initialLayout  = VK_IMAGE_LAYOUT_UNDEFINED;
+  colorAttachment.finalLayout    = VK_IMAGE_LAYOUT_PRESENT_SRC_KHR;
 
+  VkAttachmentDescription depthAttachment{};
+  depthAttachment.format         = VK_FORMAT_D32_SFLOAT;
+  depthAttachment.samples        = VK_SAMPLE_COUNT_1_BIT;
+  depthAttachment.loadOp         = VK_ATTACHMENT_LOAD_OP_CLEAR;
+  depthAttachment.storeOp        = VK_ATTACHMENT_STORE_OP_DONT_CARE;
+  depthAttachment.stencilLoadOp  = VK_ATTACHMENT_LOAD_OP_DONT_CARE;
+  depthAttachment.stencilStoreOp = VK_ATTACHMENT_STORE_OP_DONT_CARE;
+  depthAttachment.initialLayout  = VK_IMAGE_LAYOUT_UNDEFINED;
+  depthAttachment.finalLayout =
+      VK_IMAGE_LAYOUT_DEPTH_STENCIL_ATTACHMENT_OPTIMAL;
+
+  VkAttachmentReference colorAttachmentRef{};
+  colorAttachmentRef.attachment = 0;
+  colorAttachmentRef.layout     = VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL;
+
+  VkAttachmentReference depthAttachmentRef{};
+  depthAttachmentRef.attachment = 1;
+  depthAttachmentRef.layout = VK_IMAGE_LAYOUT_DEPTH_STENCIL_ATTACHMENT_OPTIMAL;
+
+  VkSubpassDescription subpass{};
+  subpass.pipelineBindPoint       = VK_PIPELINE_BIND_POINT_GRAPHICS;
+  subpass.colorAttachmentCount    = 1;
+  subpass.pColorAttachments       = &colorAttachmentRef;
+  subpass.pDepthStencilAttachment = &depthAttachmentRef;
+
+  VkSubpassDependency dependency{};
+  dependency.srcSubpass   = VK_SUBPASS_EXTERNAL;
+  dependency.dstSubpass   = 0;
+  dependency.srcStageMask = VK_PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT_BIT |
+                            VK_PIPELINE_STAGE_EARLY_FRAGMENT_TESTS_BIT;
+  dependency.srcAccessMask = 0;
+  dependency.dstStageMask  = VK_PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT_BIT |
+                            VK_PIPELINE_STAGE_EARLY_FRAGMENT_TESTS_BIT;
+  dependency.dstAccessMask = VK_ACCESS_COLOR_ATTACHMENT_WRITE_BIT |
+                             VK_ACCESS_DEPTH_STENCIL_ATTACHMENT_WRITE_BIT;
+
+  std::array<VkAttachmentDescription, 2> attachments = {colorAttachment,
+                                                        depthAttachment};
+  VkRenderPassCreateInfo                 renderPassInfo{};
+  renderPassInfo.sType           = VK_STRUCTURE_TYPE_RENDER_PASS_CREATE_INFO;
+  renderPassInfo.attachmentCount = static_cast<uint32_t>(attachments.size());
+  renderPassInfo.pAttachments    = attachments.data();
+  renderPassInfo.subpassCount    = 1;
+  renderPassInfo.pSubpasses      = &subpass;
+  renderPassInfo.dependencyCount = 1;
+  renderPassInfo.pDependencies   = &dependency;
+
+  auto err = vkCreateRenderPass(g_Device->device, &renderPassInfo, nullptr,
+                                &g_Renderpass);
+  if (err != VK_SUCCESS) SR_CORE_ERROR("Could not load renderpass");
+  g_Window->CreateDepths();
+  g_Window->CreateFramebuffer(g_Renderpass);
+}
 // All the ImGui_ImplVulkanH_XXX structures/functions are optional helpers used
 // by the demo. Your real engine/app may not use them.
 static void SetupVulkanWindow(ImGui_ImplVulkanH_Window *wd,
@@ -212,10 +283,12 @@ static void FrameRender(ImGui_ImplVulkanH_Window *wd, ImDrawData *draw_data) {
   VkResult err;
 
   VkSemaphore image_acquired_semaphore =
-      wd->FrameSemaphores[wd->SemaphoreIndex].ImageAcquiredSemaphore;
+      g_Window->frameSemaphores[g_Window->SemaphoreIndex]
+          .ImageAcquiredSemaphore;
   VkSemaphore render_complete_semaphore =
-      wd->FrameSemaphores[wd->SemaphoreIndex].RenderCompleteSemaphore;
-  err = vkAcquireNextImageKHR(g_Device->device, wd->Swapchain, UINT64_MAX,
+      g_Window->frameSemaphores[g_Window->SemaphoreIndex]
+          .RenderCompleteSemaphore;
+  err = vkAcquireNextImageKHR(g_Device->device, g_Window->swapchain, UINT64_MAX,
                               image_acquired_semaphore, VK_NULL_HANDLE,
                               &wd->FrameIndex);
   if (err == VK_ERROR_OUT_OF_DATE_KHR || err == VK_SUBOPTIMAL_KHR) {
@@ -224,16 +297,17 @@ static void FrameRender(ImGui_ImplVulkanH_Window *wd, ImDrawData *draw_data) {
   }
   check_vk_result(err);
 
-  s_CurrentFrameIndex = (s_CurrentFrameIndex + 1) % g_MainWindowData.ImageCount;
+  s_CurrentFrameIndex = (s_CurrentFrameIndex + 1) % g_Window->ImageCount;
 
-  ImGui_ImplVulkanH_Frame *fd = &wd->Frames[wd->FrameIndex];
+  Sera::Frame *frameData = &g_Window->frames[g_Window->FrameIndex];
+
   {
     err = vkWaitForFences(
-        g_Device->device, 1, &fd->Fence, VK_TRUE,
+        g_Device->device, 1, &frameData->Fence, VK_TRUE,
         UINT64_MAX);  // wait indefinitely instead of periodically checking
     check_vk_result(err);
 
-    err = vkResetFences(g_Device->device, 1, &fd->Fence);
+    err = vkResetFences(g_Device->device, 1, &frameData->Fence);
     check_vk_result(err);
   }
 
@@ -246,36 +320,40 @@ static void FrameRender(ImGui_ImplVulkanH_Window *wd, ImDrawData *draw_data) {
     // Free command buffers allocated by Application::GetCommandBuffer
     // These use g_MainWindowData.FrameIndex and not s_CurrentFrameIndex because
     // they're tied to the swapchain image index
-    auto &allocatedCommandBuffers = s_AllocatedCommandBuffers[wd->FrameIndex];
+    auto &allocatedCommandBuffers =
+        s_AllocatedCommandBuffers[g_Window->FrameIndex];
     if (allocatedCommandBuffers.size() > 0) {
-      vkFreeCommandBuffers(g_Device->device, fd->CommandPool,
+      vkFreeCommandBuffers(g_Device->device, frameData->CommandPool,
                            (uint32_t)allocatedCommandBuffers.size(),
                            allocatedCommandBuffers.data());
       allocatedCommandBuffers.clear();
     }
 
-    err = vkResetCommandPool(g_Device->device, fd->CommandPool, 0);
+    err = vkResetCommandPool(g_Device->device, frameData->CommandPool, 0);
     check_vk_result(err);
     VkCommandBufferBeginInfo info = {};
     info.sType                    = VK_STRUCTURE_TYPE_COMMAND_BUFFER_BEGIN_INFO;
     info.flags |= VK_COMMAND_BUFFER_USAGE_ONE_TIME_SUBMIT_BIT;
-    err = vkBeginCommandBuffer(fd->CommandBuffer, &info);
+    err = vkBeginCommandBuffer(frameData->CommandBuffer, &info);
     check_vk_result(err);
   }
   {
-    VkRenderPassBeginInfo info    = {};
-    info.sType                    = VK_STRUCTURE_TYPE_RENDER_PASS_BEGIN_INFO;
-    info.renderPass               = wd->RenderPass;
-    info.framebuffer              = fd->Framebuffer;
-    info.renderArea.extent.width  = wd->Width;
-    info.renderArea.extent.height = wd->Height;
+    VkClearValue          clearValue{};
+    VkRenderPassBeginInfo info = {};
+    info.sType                 = VK_STRUCTURE_TYPE_RENDER_PASS_BEGIN_INFO;
+    info.renderPass            = g_Renderpass;
+    info.framebuffer           = frameData->Framebuffer;
+    // g_Window->FrameBuffers[g_Window->ImageCount];  // fd->Framebuffer;
+    info.renderArea.extent.width  = g_Window->Width;
+    info.renderArea.extent.height = g_Window->Height;
     info.clearValueCount          = 1;
-    info.pClearValues             = &wd->ClearValue;
-    vkCmdBeginRenderPass(fd->CommandBuffer, &info, VK_SUBPASS_CONTENTS_INLINE);
+    info.pClearValues             = &clearValue;
+    vkCmdBeginRenderPass(frameData->CommandBuffer, &info,
+                         VK_SUBPASS_CONTENTS_INLINE);
   }
   // DRAW COMMANDS
   {
-    vkCmdBindPipeline(fd->CommandBuffer, VK_PIPELINE_BIND_POINT_GRAPHICS,
+    vkCmdBindPipeline(frameData->CommandBuffer, VK_PIPELINE_BIND_POINT_GRAPHICS,
                       g_GraphicPipeline);
     VkViewport viewport{};
     viewport.x        = 0.0f;
@@ -284,20 +362,20 @@ static void FrameRender(ImGui_ImplVulkanH_Window *wd, ImDrawData *draw_data) {
     viewport.height   = static_cast<float>(300);
     viewport.minDepth = 0.0f;
     viewport.maxDepth = 1.0f;
-    vkCmdSetViewport(fd->CommandBuffer, 0, 1, &viewport);
+    vkCmdSetViewport(frameData->CommandBuffer, 0, 1, &viewport);
 
     VkRect2D scissor{};
     scissor.offset = {0, 0};
     scissor.extent = {300, 300};
 
-    vkCmdDraw(fd->CommandBuffer, 3, 1, 0, 0);
+    vkCmdDraw(frameData->CommandBuffer, 3, 1, 0, 0);
   }
 
   // Record dear imgui primitives into command buffer
-  ImGui_ImplVulkan_RenderDrawData(draw_data, fd->CommandBuffer);
+  ImGui_ImplVulkan_RenderDrawData(draw_data, frameData->CommandBuffer);
 
   // Submit command buffer
-  vkCmdEndRenderPass(fd->CommandBuffer);
+  vkCmdEndRenderPass(frameData->CommandBuffer);
   {
     VkPipelineStageFlags wait_stage =
         VK_PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT_BIT;
@@ -307,13 +385,13 @@ static void FrameRender(ImGui_ImplVulkanH_Window *wd, ImDrawData *draw_data) {
     info.pWaitSemaphores      = &image_acquired_semaphore;
     info.pWaitDstStageMask    = &wait_stage;
     info.commandBufferCount   = 1;
-    info.pCommandBuffers      = &fd->CommandBuffer;
+    info.pCommandBuffers      = &frameData->CommandBuffer;
     info.signalSemaphoreCount = 1;
     info.pSignalSemaphores    = &render_complete_semaphore;
 
-    err = vkEndCommandBuffer(fd->CommandBuffer);
+    err = vkEndCommandBuffer(frameData->CommandBuffer);
     check_vk_result(err);
-    err = vkQueueSubmit(g_Queue, 1, &info, fd->Fence);
+    err = vkQueueSubmit(g_Queue, 1, &info, frameData->Fence);
     check_vk_result(err);
   }
 }
@@ -321,29 +399,160 @@ static void FrameRender(ImGui_ImplVulkanH_Window *wd, ImDrawData *draw_data) {
 static void FramePresent(ImGui_ImplVulkanH_Window *wd) {
   if (g_SwapChainRebuild) return;
   VkSemaphore render_complete_semaphore =
-      wd->FrameSemaphores[wd->SemaphoreIndex].RenderCompleteSemaphore;
+      g_Window->frameSemaphores[g_Window->SemaphoreIndex]
+          .RenderCompleteSemaphore;
   VkPresentInfoKHR info   = {};
   info.sType              = VK_STRUCTURE_TYPE_PRESENT_INFO_KHR;
   info.waitSemaphoreCount = 1;
   info.pWaitSemaphores    = &render_complete_semaphore;
   info.swapchainCount     = 1;
-  info.pSwapchains        = &wd->Swapchain;
-  info.pImageIndices      = &wd->FrameIndex;
+  info.pSwapchains        = &g_Window->swapchain;
+  info.pImageIndices      = &g_Window->FrameIndex;
   VkResult err            = vkQueuePresentKHR(g_Queue, &info);
   if (err == VK_ERROR_OUT_OF_DATE_KHR || err == VK_SUBOPTIMAL_KHR) {
     g_SwapChainRebuild = true;
     return;
   }
   check_vk_result(err);
-  wd->SemaphoreIndex =
-      (wd->SemaphoreIndex + 1) %
-      wd->ImageCount;  // Now we can use the next set of semaphores
+  g_Window->SemaphoreIndex =
+      (g_Window->SemaphoreIndex + 1) %
+      g_Window->ImageCount;  // Now we can use the next set of semaphores
 }
 
 static void glfw_error_callback(int error, const char *description) {
   SR_CORE_ERROR("GLFW Error: {0}: {1}", error, description);
 }
+static void SetuPipeline() {
+  auto create_shader_module = [&](const std::vector<char> &code) {
+    VkShaderModuleCreateInfo ci{};
+    ci.sType              = VK_STRUCTURE_TYPE_SHADER_MODULE_CREATE_INFO;
+    ci.codeSize           = code.size();
+    ci.pCode              = reinterpret_cast<const uint32_t *>(code.data());
+    VkShaderModule module = {};
+    if (vkCreateShaderModule(g_Device->device, &ci, nullptr, &module)) {
+      SR_CORE_ERROR("Could not load Shader");
+    }
+    return module;
+  };
+  std::vector<char> vertShaderCode;
+  std::vector<char> fragShaderCode;
 
+  read_file("Assets/shaders/triangle-vert.spv", vertShaderCode);
+  read_file("Assets/shaders/triangle-frag.spv", fragShaderCode);
+
+  auto vertModule = create_shader_module(vertShaderCode);
+  auto fragModule = create_shader_module(fragShaderCode);
+
+  VkPipelineShaderStageCreateInfo vertShaderStageInfo{};
+  vertShaderStageInfo.sType =
+      VK_STRUCTURE_TYPE_PIPELINE_SHADER_STAGE_CREATE_INFO;
+  vertShaderStageInfo.stage  = VK_SHADER_STAGE_VERTEX_BIT;
+  vertShaderStageInfo.module = vertModule;
+  vertShaderStageInfo.pName  = "main";
+
+  VkPipelineShaderStageCreateInfo fragShaderStageInfo{};
+  fragShaderStageInfo.sType =
+      VK_STRUCTURE_TYPE_PIPELINE_SHADER_STAGE_CREATE_INFO;
+  fragShaderStageInfo.stage  = VK_SHADER_STAGE_FRAGMENT_BIT;
+  fragShaderStageInfo.module = fragModule;
+  fragShaderStageInfo.pName  = "main";
+
+  VkPipelineShaderStageCreateInfo      shaderStages[] = {vertShaderStageInfo,
+                                                         fragShaderStageInfo};
+  VkPipelineVertexInputStateCreateInfo vertexInputInfo{};
+  vertexInputInfo.sType =
+      VK_STRUCTURE_TYPE_PIPELINE_VERTEX_INPUT_STATE_CREATE_INFO;
+  vertexInputInfo.vertexBindingDescriptionCount   = 0;
+  vertexInputInfo.vertexAttributeDescriptionCount = 0;
+
+  VkPipelineInputAssemblyStateCreateInfo inputAssembly{};
+  inputAssembly.sType =
+      VK_STRUCTURE_TYPE_PIPELINE_INPUT_ASSEMBLY_STATE_CREATE_INFO;
+  inputAssembly.topology               = VK_PRIMITIVE_TOPOLOGY_TRIANGLE_LIST;
+  inputAssembly.primitiveRestartEnable = VK_FALSE;
+
+  VkPipelineViewportStateCreateInfo viewportState{};
+  viewportState.sType = VK_STRUCTURE_TYPE_PIPELINE_VIEWPORT_STATE_CREATE_INFO;
+  viewportState.viewportCount = 1;
+  viewportState.scissorCount  = 1;
+
+  VkPipelineRasterizationStateCreateInfo rasterizer{};
+  rasterizer.sType = VK_STRUCTURE_TYPE_PIPELINE_RASTERIZATION_STATE_CREATE_INFO;
+  rasterizer.depthClampEnable        = VK_FALSE;
+  rasterizer.rasterizerDiscardEnable = VK_FALSE;
+  rasterizer.polygonMode             = VK_POLYGON_MODE_FILL;
+  rasterizer.lineWidth               = 1.0f;
+  rasterizer.cullMode                = VK_CULL_MODE_BACK_BIT;
+  rasterizer.frontFace               = VK_FRONT_FACE_CLOCKWISE;
+  rasterizer.depthBiasEnable         = VK_FALSE;
+
+  VkPipelineMultisampleStateCreateInfo multisampling{};
+  multisampling.sType =
+      VK_STRUCTURE_TYPE_PIPELINE_MULTISAMPLE_STATE_CREATE_INFO;
+  multisampling.sampleShadingEnable  = VK_FALSE;
+  multisampling.rasterizationSamples = VK_SAMPLE_COUNT_1_BIT;
+
+  VkPipelineColorBlendAttachmentState colorBlendAttachment{};
+  colorBlendAttachment.colorWriteMask =
+      VK_COLOR_COMPONENT_R_BIT | VK_COLOR_COMPONENT_G_BIT |
+      VK_COLOR_COMPONENT_B_BIT | VK_COLOR_COMPONENT_A_BIT;
+  colorBlendAttachment.blendEnable = VK_FALSE;
+
+  VkPipelineColorBlendStateCreateInfo colorBlending{};
+  colorBlending.sType =
+      VK_STRUCTURE_TYPE_PIPELINE_COLOR_BLEND_STATE_CREATE_INFO;
+  colorBlending.logicOpEnable     = VK_FALSE;
+  colorBlending.logicOp           = VK_LOGIC_OP_COPY;
+  colorBlending.attachmentCount   = 1;
+  colorBlending.pAttachments      = &colorBlendAttachment;
+  colorBlending.blendConstants[0] = 0.0f;
+  colorBlending.blendConstants[1] = 0.0f;
+  colorBlending.blendConstants[2] = 0.0f;
+  colorBlending.blendConstants[3] = 0.0f;
+
+  std::array<VkDynamicState, 2>    dynamicStates = {VK_DYNAMIC_STATE_VIEWPORT,
+                                                    VK_DYNAMIC_STATE_SCISSOR};
+  VkPipelineDynamicStateCreateInfo dynamicState{};
+  dynamicState.sType = VK_STRUCTURE_TYPE_PIPELINE_DYNAMIC_STATE_CREATE_INFO;
+  dynamicState.dynamicStateCount = static_cast<uint32_t>(dynamicStates.size());
+  dynamicState.pDynamicStates    = dynamicStates.data();
+
+  VkPipelineLayoutCreateInfo pipelineLayoutInfo{};
+  pipelineLayoutInfo.sType = VK_STRUCTURE_TYPE_PIPELINE_LAYOUT_CREATE_INFO;
+  pipelineLayoutInfo.setLayoutCount         = 0;
+  pipelineLayoutInfo.pushConstantRangeCount = 0;
+
+  if (vkCreatePipelineLayout(g_Device->device, &pipelineLayoutInfo, nullptr,
+                             &g_GraphicsPipelineLayout) != VK_SUCCESS) {
+    SR_CORE_ERROR("Failed to create pipeline layout");
+    return;
+  }
+
+  VkGraphicsPipelineCreateInfo pipelineInfo{};
+  pipelineInfo.sType      = VK_STRUCTURE_TYPE_GRAPHICS_PIPELINE_CREATE_INFO;
+  pipelineInfo.stageCount = 2;
+  pipelineInfo.pStages    = shaderStages;
+  pipelineInfo.pVertexInputState   = &vertexInputInfo;
+  pipelineInfo.pInputAssemblyState = &inputAssembly;
+  pipelineInfo.pViewportState      = &viewportState;
+  pipelineInfo.pRasterizationState = &rasterizer;
+  pipelineInfo.pMultisampleState   = &multisampling;
+  pipelineInfo.pColorBlendState    = &colorBlending;
+  pipelineInfo.pDynamicState       = &dynamicState;
+  pipelineInfo.layout              = g_GraphicsPipelineLayout;
+  pipelineInfo.renderPass          = g_Renderpass;
+  pipelineInfo.subpass             = 0;
+  pipelineInfo.basePipelineHandle  = VK_NULL_HANDLE;
+
+  if (vkCreateGraphicsPipelines(g_Device->device, VK_NULL_HANDLE, 1,
+                                &pipelineInfo, nullptr,
+                                &g_GraphicPipeline) != VK_SUCCESS) {
+    SR_CORE_ERROR("Failed to create graphics pipeline");
+  }
+
+  vkDestroyShaderModule(g_Device->device, fragModule, nullptr);
+  vkDestroyShaderModule(g_Device->device, vertModule, nullptr);
+}
 namespace Sera {
 
   Application::Application(const ApplicationSpecification &specification)
@@ -359,6 +568,9 @@ namespace Sera {
     s_Instance = nullptr;
   }
 
+  GLFWwindow *Application::GetWindowHandle() const {
+    return g_Window->GetHandle();
+  }
   Application &Application::Get() { return *s_Instance; }
 
   void Application::Init() {
@@ -370,9 +582,6 @@ namespace Sera {
     }
 
     glfwWindowHint(GLFW_CLIENT_API, GLFW_NO_API);
-    m_WindowHandle =
-        glfwCreateWindow(m_Specification.Width, m_Specification.Height,
-                         m_Specification.Name.c_str(), NULL, NULL);
 
     // Setup Vulkan
     if (!glfwVulkanSupported()) {
@@ -384,20 +593,16 @@ namespace Sera {
         glfwGetRequiredInstanceExtensions(&extensions_count);
     SetupVulkan(extensions, extensions_count);
 
-    // Create Window Surface
-    VkSurfaceKHR surface;
-    VkResult err = glfwCreateWindowSurface(g_Instance->instance, m_WindowHandle,
-                                           g_Allocator, &surface);
-    check_vk_result(err);
-
-    // Create Framebuffers
-    int w, h;
-    glfwGetFramebufferSize(m_WindowHandle, &w, &h);
     ImGui_ImplVulkanH_Window *wd = &g_MainWindowData;
-    SetupVulkanWindow(wd, surface, w, h);
 
-    s_AllocatedCommandBuffers.resize(wd->ImageCount);
-    s_ResourceFreeQueue.resize(wd->ImageCount);
+    g_Window =
+        Window::Create(g_Instance, g_PhysicalDevice, g_Allocator, g_Device);
+    SetupRenderpass();
+
+    VkResult err;
+
+    s_AllocatedCommandBuffers.resize(g_Window->ImageCount);
+    s_ResourceFreeQueue.resize(g_Window->ImageCount);
 
     // Setup Dear ImGui context
     IMGUI_CHECKVERSION();
@@ -428,7 +633,7 @@ namespace Sera {
     }
 
     // Setup Platform/Renderer backends
-    ImGui_ImplGlfw_InitForVulkan(m_WindowHandle, true);
+    ImGui_ImplGlfw_InitForVulkan(g_Window->GetHandle(), true);
     ImGui_ImplVulkan_InitInfo init_info = {};
     init_info.Instance                  = g_Instance->instance;
     init_info.PhysicalDevice            = g_PhysicalDevice->physicalDevice;
@@ -439,11 +644,11 @@ namespace Sera {
     init_info.DescriptorPool            = g_DescriptorPool;
     init_info.Subpass                   = 0;
     init_info.MinImageCount             = g_MinImageCount;
-    init_info.ImageCount                = wd->ImageCount + 1;
+    init_info.ImageCount                = g_Window->ImageCount + 1;
     init_info.MSAASamples               = VK_SAMPLE_COUNT_1_BIT;
     init_info.Allocator                 = g_Allocator;
     init_info.CheckVkResultFn           = check_vk_result;
-    init_info.RenderPass                = wd->RenderPass;
+    init_info.RenderPass                = g_Renderpass;  // wd->RenderPass;
     ImGui_ImplVulkan_Init(&init_info);
 
     // Load default font
@@ -456,8 +661,10 @@ namespace Sera {
     // Upload Fonts
     {
       // Use any command queue
-      VkCommandPool   command_pool   = wd->Frames[wd->FrameIndex].CommandPool;
-      VkCommandBuffer command_buffer = wd->Frames[wd->FrameIndex].CommandBuffer;
+      VkCommandPool command_pool =
+          g_Window->frames[g_Window->FrameIndex].CommandPool;
+      VkCommandBuffer command_buffer =
+          g_Window->frames[g_Window->FrameIndex].CommandBuffer;
 
       err = vkResetCommandPool(g_Device->device, command_pool, 0);
       check_vk_result(err);
@@ -484,141 +691,7 @@ namespace Sera {
       ImGui_ImplVulkan_DestroyFontsTexture();
       // ImGui_ImplVulkan_DestroyFontUploadObjects();
     }
-    // pipeline
-    {
-      auto create_shader_module = [&](const std::vector<char> &code) {
-        VkShaderModuleCreateInfo ci{};
-        ci.sType              = VK_STRUCTURE_TYPE_SHADER_MODULE_CREATE_INFO;
-        ci.codeSize           = code.size();
-        ci.pCode              = reinterpret_cast<const uint32_t *>(code.data());
-        VkShaderModule module = {};
-        if (vkCreateShaderModule(g_Device->device, &ci, nullptr, &module)) {
-          SR_CORE_ERROR("Could not load Shader");
-        }
-        return module;
-      };
-      std::vector<char> vertShaderCode;
-      std::vector<char> fragShaderCode;
-
-      read_file("Assets/shaders/triangle-vert.spv", vertShaderCode);
-      read_file("Assets/shaders/triangle-frag.spv", fragShaderCode);
-
-      auto vertModule = create_shader_module(vertShaderCode);
-      auto fragModule = create_shader_module(fragShaderCode);
-
-      VkPipelineShaderStageCreateInfo vertShaderStageInfo{};
-      vertShaderStageInfo.sType =
-          VK_STRUCTURE_TYPE_PIPELINE_SHADER_STAGE_CREATE_INFO;
-      vertShaderStageInfo.stage  = VK_SHADER_STAGE_VERTEX_BIT;
-      vertShaderStageInfo.module = vertModule;
-      vertShaderStageInfo.pName  = "main";
-
-      VkPipelineShaderStageCreateInfo fragShaderStageInfo{};
-      fragShaderStageInfo.sType =
-          VK_STRUCTURE_TYPE_PIPELINE_SHADER_STAGE_CREATE_INFO;
-      fragShaderStageInfo.stage  = VK_SHADER_STAGE_FRAGMENT_BIT;
-      fragShaderStageInfo.module = fragModule;
-      fragShaderStageInfo.pName  = "main";
-
-      VkPipelineShaderStageCreateInfo shaderStages[] = {vertShaderStageInfo,
-                                                        fragShaderStageInfo};
-      VkPipelineVertexInputStateCreateInfo vertexInputInfo{};
-      vertexInputInfo.sType =
-          VK_STRUCTURE_TYPE_PIPELINE_VERTEX_INPUT_STATE_CREATE_INFO;
-      vertexInputInfo.vertexBindingDescriptionCount   = 0;
-      vertexInputInfo.vertexAttributeDescriptionCount = 0;
-
-      VkPipelineInputAssemblyStateCreateInfo inputAssembly{};
-      inputAssembly.sType =
-          VK_STRUCTURE_TYPE_PIPELINE_INPUT_ASSEMBLY_STATE_CREATE_INFO;
-      inputAssembly.topology = VK_PRIMITIVE_TOPOLOGY_TRIANGLE_LIST;
-      inputAssembly.primitiveRestartEnable = VK_FALSE;
-
-      VkPipelineViewportStateCreateInfo viewportState{};
-      viewportState.sType =
-          VK_STRUCTURE_TYPE_PIPELINE_VIEWPORT_STATE_CREATE_INFO;
-      viewportState.viewportCount = 1;
-      viewportState.scissorCount  = 1;
-
-      VkPipelineRasterizationStateCreateInfo rasterizer{};
-      rasterizer.sType =
-          VK_STRUCTURE_TYPE_PIPELINE_RASTERIZATION_STATE_CREATE_INFO;
-      rasterizer.depthClampEnable        = VK_FALSE;
-      rasterizer.rasterizerDiscardEnable = VK_FALSE;
-      rasterizer.polygonMode             = VK_POLYGON_MODE_FILL;
-      rasterizer.lineWidth               = 1.0f;
-      rasterizer.cullMode                = VK_CULL_MODE_BACK_BIT;
-      rasterizer.frontFace               = VK_FRONT_FACE_CLOCKWISE;
-      rasterizer.depthBiasEnable         = VK_FALSE;
-
-      VkPipelineMultisampleStateCreateInfo multisampling{};
-      multisampling.sType =
-          VK_STRUCTURE_TYPE_PIPELINE_MULTISAMPLE_STATE_CREATE_INFO;
-      multisampling.sampleShadingEnable  = VK_FALSE;
-      multisampling.rasterizationSamples = VK_SAMPLE_COUNT_1_BIT;
-
-      VkPipelineColorBlendAttachmentState colorBlendAttachment{};
-      colorBlendAttachment.colorWriteMask =
-          VK_COLOR_COMPONENT_R_BIT | VK_COLOR_COMPONENT_G_BIT |
-          VK_COLOR_COMPONENT_B_BIT | VK_COLOR_COMPONENT_A_BIT;
-      colorBlendAttachment.blendEnable = VK_FALSE;
-
-      VkPipelineColorBlendStateCreateInfo colorBlending{};
-      colorBlending.sType =
-          VK_STRUCTURE_TYPE_PIPELINE_COLOR_BLEND_STATE_CREATE_INFO;
-      colorBlending.logicOpEnable     = VK_FALSE;
-      colorBlending.logicOp           = VK_LOGIC_OP_COPY;
-      colorBlending.attachmentCount   = 1;
-      colorBlending.pAttachments      = &colorBlendAttachment;
-      colorBlending.blendConstants[0] = 0.0f;
-      colorBlending.blendConstants[1] = 0.0f;
-      colorBlending.blendConstants[2] = 0.0f;
-      colorBlending.blendConstants[3] = 0.0f;
-
-      std::vector<VkDynamicState> dynamicStates = {VK_DYNAMIC_STATE_VIEWPORT,
-                                                   VK_DYNAMIC_STATE_SCISSOR};
-      VkPipelineDynamicStateCreateInfo dynamicState{};
-      dynamicState.sType = VK_STRUCTURE_TYPE_PIPELINE_DYNAMIC_STATE_CREATE_INFO;
-      dynamicState.dynamicStateCount =
-          static_cast<uint32_t>(dynamicStates.size());
-      dynamicState.pDynamicStates = dynamicStates.data();
-
-      VkPipelineLayoutCreateInfo pipelineLayoutInfo{};
-      pipelineLayoutInfo.sType = VK_STRUCTURE_TYPE_PIPELINE_LAYOUT_CREATE_INFO;
-      pipelineLayoutInfo.setLayoutCount         = 0;
-      pipelineLayoutInfo.pushConstantRangeCount = 0;
-
-      if (vkCreatePipelineLayout(g_Device->device, &pipelineLayoutInfo, nullptr,
-                                 &g_GraphicsPipelineLayout) != VK_SUCCESS) {
-        SR_CORE_ERROR("Failed to create pipeline layout");
-        return;
-      }
-
-      VkGraphicsPipelineCreateInfo pipelineInfo{};
-      pipelineInfo.sType      = VK_STRUCTURE_TYPE_GRAPHICS_PIPELINE_CREATE_INFO;
-      pipelineInfo.stageCount = 2;
-      pipelineInfo.pStages    = shaderStages;
-      pipelineInfo.pVertexInputState   = &vertexInputInfo;
-      pipelineInfo.pInputAssemblyState = &inputAssembly;
-      pipelineInfo.pViewportState      = &viewportState;
-      pipelineInfo.pRasterizationState = &rasterizer;
-      pipelineInfo.pMultisampleState   = &multisampling;
-      pipelineInfo.pColorBlendState    = &colorBlending;
-      pipelineInfo.pDynamicState       = &dynamicState;
-      pipelineInfo.layout              = g_GraphicsPipelineLayout;
-      pipelineInfo.renderPass          = wd->RenderPass;
-      pipelineInfo.subpass             = 0;
-      pipelineInfo.basePipelineHandle  = VK_NULL_HANDLE;
-
-      if (vkCreateGraphicsPipelines(g_Device->device, VK_NULL_HANDLE, 1,
-                                    &pipelineInfo, nullptr,
-                                    &g_GraphicPipeline) != VK_SUCCESS) {
-        SR_CORE_ERROR("Failed to create graphics pipeline");
-      }
-
-      vkDestroyShaderModule(g_Device->device, fragModule, nullptr);
-      vkDestroyShaderModule(g_Device->device, vertModule, nullptr);
-    }
+    SetuPipeline();
   }
 
   void Application::Shutdown() {
@@ -643,7 +716,7 @@ namespace Sera {
     CleanupVulkanWindow();
     CleanupVulkan();
 
-    glfwDestroyWindow(m_WindowHandle);
+    glfwDestroyWindow(g_Window->GetHandle());
     glfwTerminate();
 
     g_ApplicationRunning = false;
@@ -657,7 +730,7 @@ namespace Sera {
     ImGuiIO                  &io          = ImGui::GetIO();
 
     // Main loop
-    while (!glfwWindowShouldClose(m_WindowHandle) && m_Running) {
+    while (!glfwWindowShouldClose(g_Window->GetHandle()) && m_Running) {
       glfwPollEvents();
 
       for (auto &layer : m_LayerStack) layer->OnUpdate(m_TimeStep);
@@ -665,7 +738,7 @@ namespace Sera {
       // Resize swap chain?
       if (g_SwapChainRebuild) {
         int width, height;
-        glfwGetFramebufferSize(m_WindowHandle, &width, &height);
+        glfwGetFramebufferSize(g_Window->GetHandle(), &width, &height);
         if (width > 0 && height > 0) {
           ImGui_ImplVulkan_SetMinImageCount(g_MinImageCount);
           ImGui_ImplVulkanH_CreateOrResizeWindow(
