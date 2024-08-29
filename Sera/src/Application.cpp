@@ -1,4 +1,5 @@
 #include "Application.h"
+#include "Backend/VulkanSwapchain.h"
 #include "Log.h"
 #include "Backend/VulkanInstance.h"
 #include "Backend/VulkanPhysicalDevice.h"
@@ -7,16 +8,15 @@
 //
 // Adapted from Dear ImGui Vulkan example
 //
-#include "Window.h"
 #include "backends/imgui_impl_glfw.h"
 #include "backends/imgui_impl_vulkan.h"
-#include "glm/trigonometric.hpp"
 #include "vulkan/vulkan_core.h"
 #include <fstream>
 #include <imgui_internal.h>
 #include <stdio.h>   // printf, fprintf
 #include <stdlib.h>  // abort
 #include <array>
+#include <vector>
 
 #define GLFW_INCLUDE_NONE
 #define GLFW_INCLUDE_VULKAN
@@ -47,22 +47,24 @@ extern bool g_ApplicationRunning;
 #define IMGUI_VULKAN_DEBUG_REPORT
 #endif
 
-static VkAllocationCallbacks      *g_Allocator              = NULL;
-static Sera::VulkanInstance       *g_Instance               = nullptr;
-static Sera::VulkanPhysicalDevice *g_PhysicalDevice         = nullptr;
-static Sera::VulkanDevice         *g_Device                 = nullptr;
-static Sera::Window               *g_Window                 = nullptr;
-static uint32_t                    g_QueueFamily            = (uint32_t)-1;
-static VkQueue                     g_Queue                  = VK_NULL_HANDLE;
-static VkDebugReportCallbackEXT    g_DebugReport            = VK_NULL_HANDLE;
-static VkPipelineCache             g_PipelineCache          = VK_NULL_HANDLE;
-static VkDescriptorPool            g_DescriptorPool         = VK_NULL_HANDLE;
-static VkPipeline                  g_GraphicPipeline        = VK_NULL_HANDLE;
-static VkPipelineLayout            g_GraphicsPipelineLayout = VK_NULL_HANDLE;
-static VkRenderPass                g_Renderpass             = VK_NULL_HANDLE;
+static VkAllocationCallbacks       *g_Allocator              = NULL;
+static Sera::VulkanInstance        *g_Instance               = nullptr;
+static Sera::VulkanPhysicalDevice  *g_PhysicalDevice         = nullptr;
+static Sera::VulkanDevice          *g_Device                 = nullptr;
+static uint32_t                     g_QueueFamily            = (uint32_t)-1;
+static VkQueue                      g_Queue                  = VK_NULL_HANDLE;
+static VkDebugReportCallbackEXT     g_DebugReport            = VK_NULL_HANDLE;
+static VkPipelineCache              g_PipelineCache          = VK_NULL_HANDLE;
+static VkDescriptorPool             g_DescriptorPool         = VK_NULL_HANDLE;
+static VkPipeline                   g_GraphicPipeline        = VK_NULL_HANDLE;
+static VkPipelineLayout             g_GraphicsPipelineLayout = VK_NULL_HANDLE;
+static VkRenderPass                 g_Renderpass             = VK_NULL_HANDLE;
+static VkSurfaceKHR                 g_Surface                = VK_NULL_HANDLE;
+static VkSurfaceFormatKHR           g_SurfaceFormat;
+static std::vector<VkCommandBuffer> g_CommandBuffers;
+static Sera::VulkanSwapchain       *g_Swapchain = nullptr;
 
 static ImGui_ImplVulkanH_Window g_MainWindowData;
-static int                      g_MinImageCount    = 3;
 static bool                     g_SwapChainRebuild = false;
 
 // Per-frame-in-flight
@@ -77,7 +79,7 @@ static Sera::Application *s_Instance = nullptr;
 
 void check_vk_result(VkResult err) {
   if (err == 0) return;
-  fprintf(stderr, "[vulkan] Error: VkResult = %d\n", err);
+  SR_CORE_ERROR("[vulkan] Error: VkResult = {0}", (uint32_t)err);
   if (err < 0) abort();
 }
 
@@ -109,7 +111,7 @@ static void SetupVulkan(const char **extensions, uint32_t extensions_count) {
     g_Queue  = g_Device->queue;
   }
 
-  // Create Descriptor Pool
+  // Create Descriptor Pool for imgui
   {
     VkDescriptorPoolSize pool_sizes[] = {
         {               VK_DESCRIPTOR_TYPE_SAMPLER, 1000},
@@ -137,7 +139,7 @@ static void SetupVulkan(const char **extensions, uint32_t extensions_count) {
 }
 static void SetupRenderpass() {
   VkAttachmentDescription colorAttachment{};
-  colorAttachment.format         = g_Window->SurfaceFormat.format;
+  colorAttachment.format         = g_SurfaceFormat.format;
   colorAttachment.samples        = VK_SAMPLE_COUNT_1_BIT;
   colorAttachment.loadOp         = VK_ATTACHMENT_LOAD_OP_CLEAR;
   colorAttachment.storeOp        = VK_ATTACHMENT_STORE_OP_STORE;
@@ -196,21 +198,59 @@ static void SetupRenderpass() {
   auto err = vkCreateRenderPass(g_Device->device, &renderPassInfo, nullptr,
                                 &g_Renderpass);
   if (err != VK_SUCCESS) SR_CORE_ERROR("Could not load renderpass");
-  g_Window->CreateDepths();
-  g_Window->CreateFramebuffer(g_Renderpass);
+  g_Swapchain->CreateFramebuffer(g_Renderpass);
 }
 // All the ImGui_ImplVulkanH_XXX structures/functions are optional helpers used
 // by the demo. Your real engine/app may not use them.
-static void SetupVulkanWindow(ImGui_ImplVulkanH_Window *wd,
-                              VkSurfaceKHR surface, int width, int height) {
-  wd->Surface = surface;
+static void InitPools() {
+  VkResult err;
 
+  for (int i = 0; i < g_Swapchain->ImageCount; i++) {
+    auto *frame = &g_Swapchain->Frames[i];
+    {
+      VkCommandPoolCreateInfo info = {};
+      info.sType                   = VK_STRUCTURE_TYPE_COMMAND_POOL_CREATE_INFO;
+      info.flags                   = 0;
+      info.queueFamilyIndex        = g_QueueFamily;
+      err = vkCreateCommandPool(g_Device->device, &info, g_Allocator,
+                                &frame->CommandPool);
+    }
+    {
+      VkCommandBufferAllocateInfo info = {};
+      info.sType              = VK_STRUCTURE_TYPE_COMMAND_BUFFER_ALLOCATE_INFO;
+      info.commandPool        = frame->CommandPool;
+      info.level              = VK_COMMAND_BUFFER_LEVEL_PRIMARY;
+      info.commandBufferCount = 1;
+      err = vkAllocateCommandBuffers(g_Device->device, &info,
+                                     &frame->CommandBuffer);
+      check_vk_result(err);
+    }
+    {
+      VkFenceCreateInfo info = {};
+      info.sType             = VK_STRUCTURE_TYPE_FENCE_CREATE_INFO;
+      info.flags             = VK_FENCE_CREATE_SIGNALED_BIT;
+      err = vkCreateFence(g_Device->device, &info, g_Allocator, &frame->Fence);
+      check_vk_result(err);
+    }
+  }
+  for (int i = 0; i < g_Swapchain->SemaphoreCount; i++) {
+    auto                 *frame = &g_Swapchain->FrameSemaphoress[i];
+    VkSemaphoreCreateInfo info{};
+    info.sType = VK_STRUCTURE_TYPE_SEMAPHORE_CREATE_INFO;
+    err        = vkCreateSemaphore(g_Device->device, &info, g_Allocator,
+                                   &frame->ImageAcquiredSemaphore);
+
+    err = vkCreateSemaphore(g_Device->device, &info, g_Allocator,
+                            &frame->RenderCompleteSemaphore);
+  }
+}
+static void SetupVulkanWindow(int width, int height) {
   // Check for WSI support
   VkBool32 res;
   vkGetPhysicalDeviceSurfaceSupportKHR(g_PhysicalDevice->physicalDevice,
-                                       g_QueueFamily, wd->Surface, &res);
+                                       g_QueueFamily, g_Surface, &res);
   if (res != VK_TRUE) {
-    fprintf(stderr, "Error no WSI support on physical device 0\n");
+    SR_CORE_ERROR("Error no WSI support on physical device");
     exit(-1);
   }
 
@@ -220,37 +260,29 @@ static void SetupVulkanWindow(ImGui_ImplVulkanH_Window *wd,
       VK_FORMAT_B8G8R8_UNORM, VK_FORMAT_R8G8B8_UNORM};
   const VkColorSpaceKHR requestSurfaceColorSpace =
       VK_COLORSPACE_SRGB_NONLINEAR_KHR;
-  wd->SurfaceFormat = ImGui_ImplVulkanH_SelectSurfaceFormat(
-      g_PhysicalDevice->physicalDevice, wd->Surface, requestSurfaceImageFormat,
+  g_SurfaceFormat = ImGui_ImplVulkanH_SelectSurfaceFormat(
+      g_PhysicalDevice->physicalDevice, g_Surface, requestSurfaceImageFormat,
       (size_t)IM_ARRAYSIZE(requestSurfaceImageFormat),
       requestSurfaceColorSpace);
 
-  // Select Present Mode
-#ifdef IMGUI_UNLIMITED_FRAME_RATE
-  VkPresentModeKHR present_modes[] = {VK_PRESENT_MODE_MAILBOX_KHR,
-                                      VK_PRESENT_MODE_IMMEDIATE_KHR,
-                                      VK_PRESENT_MODE_FIFO_KHR};
-#else
   VkPresentModeKHR present_modes[] = {VK_PRESENT_MODE_FIFO_KHR};
-#endif
-  wd->PresentMode = ImGui_ImplVulkanH_SelectPresentMode(
-      g_PhysicalDevice->physicalDevice, wd->Surface, &present_modes[0],
+  auto             presentMode     = ImGui_ImplVulkanH_SelectPresentMode(
+      g_PhysicalDevice->physicalDevice, g_Surface, &present_modes[0],
       IM_ARRAYSIZE(present_modes));
-  // printf("[vulkan] Selected PresentMode = %d\n", wd->PresentMode);
-
-  // Create SwapChain, RenderPass, Framebuffer, etc.
-  IM_ASSERT(g_MinImageCount >= 2);
-  ImGui_ImplVulkanH_CreateOrResizeWindow(
-      g_Instance->instance, g_PhysicalDevice->physicalDevice, g_Device->device,
-      wd, g_QueueFamily, g_Allocator, width, height, g_MinImageCount);
+  g_Swapchain =
+      Sera::VulkanSwapchain::Create(g_Instance, g_PhysicalDevice, g_Allocator,
+                                    g_Device, true, g_SurfaceFormat, g_Surface);
+  g_Swapchain->Resize(width, height);
+  g_CommandBuffers.resize(g_Swapchain->ImageCount, VK_NULL_HANDLE);
+  InitPools();
 }
 
 static inline VkSemaphore GetImageAcquiredSemaphore() {
-  return g_Window->frameSemaphores[g_Window->SemaphoreIndex]
+  return g_Swapchain->FrameSemaphoress[g_Swapchain->SemaphoreIndex]
       .ImageAcquiredSemaphore;
 }
 static inline VkSemaphore GetRenderCompleteSemaphore() {
-  return g_Window->frameSemaphores[g_Window->SemaphoreIndex]
+  return g_Swapchain->FrameSemaphoress[g_Swapchain->SemaphoreIndex]
       .RenderCompleteSemaphore;
 }
 
@@ -292,23 +324,23 @@ static void FrameRender(ImGui_ImplVulkanH_Window *wd, ImDrawData *draw_data) {
   VkResult err;
 
   VkSemaphore image_acquired_semaphore =
-      g_Window->frameSemaphores[g_Window->SemaphoreIndex]
+      g_Swapchain->FrameSemaphoress[g_Swapchain->SemaphoreIndex]
           .ImageAcquiredSemaphore;
   VkSemaphore render_complete_semaphore =
-      g_Window->frameSemaphores[g_Window->SemaphoreIndex]
+      g_Swapchain->FrameSemaphoress[g_Swapchain->SemaphoreIndex]
           .RenderCompleteSemaphore;
-  err = vkAcquireNextImageKHR(g_Device->device, g_Window->swapchain, UINT64_MAX,
+  err = vkAcquireNextImageKHR(g_Device->device, g_Swapchain->Get(), UINT64_MAX,
                               image_acquired_semaphore, VK_NULL_HANDLE,
-                              &g_Window->FrameIndex);
+                              &g_Swapchain->FrameIndex);
   if (err == VK_ERROR_OUT_OF_DATE_KHR || err == VK_SUBOPTIMAL_KHR) {
     g_SwapChainRebuild = true;
     return;
   }
   check_vk_result(err);
 
-  s_CurrentFrameIndex = (s_CurrentFrameIndex + 1) % g_Window->ImageCount;
+  s_CurrentFrameIndex = (s_CurrentFrameIndex + 1) % g_Swapchain->ImageCount;
 
-  Sera::Frame *frameData = &g_Window->frames[g_Window->FrameIndex];
+  Sera::Frame *frameData = &g_Swapchain->Frames[g_Swapchain->FrameIndex];
 
   {
     err = vkWaitForFences(
@@ -330,7 +362,7 @@ static void FrameRender(ImGui_ImplVulkanH_Window *wd, ImDrawData *draw_data) {
     // These use g_MainWindowData.FrameIndex and not s_CurrentFrameIndex because
     // they're tied to the swapchain image index
     auto &allocatedCommandBuffers =
-        s_AllocatedCommandBuffers[g_Window->FrameIndex];
+        s_AllocatedCommandBuffers[g_Swapchain->FrameIndex];
     if (allocatedCommandBuffers.size() > 0) {
       vkFreeCommandBuffers(g_Device->device, frameData->CommandPool,
                            (uint32_t)allocatedCommandBuffers.size(),
@@ -352,13 +384,14 @@ static void FrameRender(ImGui_ImplVulkanH_Window *wd, ImDrawData *draw_data) {
         {0.0f, 0.0f, 0.0f, 1.0f}
     };
     clearValues[1].depthStencil = {1.0f, 0};
-    VkRenderPassBeginInfo info  = {};
-    info.sType                  = VK_STRUCTURE_TYPE_RENDER_PASS_BEGIN_INFO;
-    info.renderPass             = g_Renderpass;
-    info.framebuffer            = frameData->Framebuffer;
-    // g_Window->FrameBuffers[g_Window->ImageCount];  // fd->Framebuffer;
-    info.renderArea.extent.width  = g_Window->Width;
-    info.renderArea.extent.height = g_Window->Height;
+    int w, h;
+    glfwGetFramebufferSize(s_Instance->GetWindowHandle(), &w, &h);
+    VkRenderPassBeginInfo info    = {};
+    info.sType                    = VK_STRUCTURE_TYPE_RENDER_PASS_BEGIN_INFO;
+    info.renderPass               = g_Renderpass;
+    info.framebuffer              = frameData->Framebuffer;
+    info.renderArea.extent.width  = w;
+    info.renderArea.extent.height = h;
     info.clearValueCount          = clearValues.size();
     info.pClearValues             = clearValues.data();
     vkCmdBeginRenderPass(frameData->CommandBuffer, &info,
@@ -412,25 +445,28 @@ static void FrameRender(ImGui_ImplVulkanH_Window *wd, ImDrawData *draw_data) {
 
 static void FramePresent(ImGui_ImplVulkanH_Window *wd) {
   if (g_SwapChainRebuild) return;
+
   VkSemaphore render_complete_semaphore =
-      g_Window->frameSemaphores[g_Window->SemaphoreIndex]
+      g_Swapchain->FrameSemaphoress[g_Swapchain->SemaphoreIndex]
           .RenderCompleteSemaphore;
   VkPresentInfoKHR info   = {};
   info.sType              = VK_STRUCTURE_TYPE_PRESENT_INFO_KHR;
   info.waitSemaphoreCount = 1;
   info.pWaitSemaphores    = &render_complete_semaphore;
   info.swapchainCount     = 1;
-  info.pSwapchains        = &g_Window->swapchain;
-  info.pImageIndices      = &g_Window->FrameIndex;
-  VkResult err            = vkQueuePresentKHR(g_Queue, &info);
+  auto sc                 = g_Swapchain->Get();
+  info.pSwapchains        = &sc;
+  info.pImageIndices      = &g_Swapchain->FrameIndex;
+  VkResult err =
+      g_Swapchain->Present(g_Queue);  // vkQueuePresentKHR(g_Queue, &info);
   if (err == VK_ERROR_OUT_OF_DATE_KHR || err == VK_SUBOPTIMAL_KHR) {
     g_SwapChainRebuild = true;
     return;
   }
   check_vk_result(err);
-  g_Window->SemaphoreIndex =
-      (g_Window->SemaphoreIndex + 1) %
-      g_Window->ImageCount;  // Now we can use the next set of semaphores
+  g_Swapchain->SemaphoreIndex =
+      (g_Swapchain->SemaphoreIndex + 1) %
+      g_Swapchain->ImageCount;  // Now we can use the next set of semaphores
 }
 
 static void glfw_error_callback(int error, const char *description) {
@@ -592,9 +628,6 @@ namespace Sera {
     s_Instance = nullptr;
   }
 
-  GLFWwindow *Application::GetWindowHandle() const {
-    return g_Window->GetHandle();
-  }
   Application &Application::Get() { return *s_Instance; }
 
   void Application::Init() {
@@ -617,17 +650,20 @@ namespace Sera {
         glfwGetRequiredInstanceExtensions(&extensions_count);
     SetupVulkan(extensions, extensions_count);
 
-    ImGui_ImplVulkanH_Window *wd = &g_MainWindowData;
+    m_WindowHandle =
+        glfwCreateWindow(m_Specification.Width, m_Specification.Height,
+                         m_Specification.Name.c_str(), nullptr, nullptr);
 
-    g_Window =
-        Window::Create(g_Instance, g_PhysicalDevice, g_Allocator, g_Device);
+    auto err = glfwCreateWindowSurface(g_Instance->instance, m_WindowHandle,
+                                       g_Allocator, &g_Surface);
+    SetupVulkanWindow(m_Specification.Width, m_Specification.Height);
     SetupRenderpass();
 
-    VkResult err;
+    s_AllocatedCommandBuffers.resize(g_Swapchain->ImageCount);
+    s_ResourceFreeQueue.resize(g_Swapchain->ImageCount);
 
-    s_AllocatedCommandBuffers.resize(g_Window->ImageCount);
-    s_ResourceFreeQueue.resize(g_Window->ImageCount);
-
+    VkBool32                  res;
+    ImGui_ImplVulkanH_Window *wd = &g_MainWindowData;
     // Setup Dear ImGui context
     IMGUI_CHECKVERSION();
     ImGui::CreateContext();
@@ -639,8 +675,8 @@ namespace Sera {
     // Gamepad Controls
     io.ConfigFlags |= ImGuiConfigFlags_DockingEnable;  // Enable Docking
     io.ConfigFlags |=
-        ImGuiConfigFlags_ViewportsEnable;  // Enable Multi-Viewport /
-                                           // Platform Windows
+        ImGuiConfigFlags_ViewportsEnable;  // Enable Multi-Viewport
+                                           // / Platform Windows
     // io.ConfigViewportsNoAutoMerge = true;
     // io.ConfigViewportsNoTaskBarIcon = true;
 
@@ -657,7 +693,7 @@ namespace Sera {
     }
 
     // Setup Platform/Renderer backends
-    ImGui_ImplGlfw_InitForVulkan(g_Window->GetHandle(), true);
+    ImGui_ImplGlfw_InitForVulkan(GetWindowHandle(), true);
     ImGui_ImplVulkan_InitInfo init_info = {};
     init_info.Instance                  = g_Instance->instance;
     init_info.PhysicalDevice            = g_PhysicalDevice->physicalDevice;
@@ -667,8 +703,8 @@ namespace Sera {
     init_info.PipelineCache             = g_PipelineCache;
     init_info.DescriptorPool            = g_DescriptorPool;
     init_info.Subpass                   = 0;
-    init_info.MinImageCount             = g_MinImageCount;
-    init_info.ImageCount                = g_Window->ImageCount + 1;
+    init_info.MinImageCount             = g_Swapchain->ImageCount;
+    init_info.ImageCount                = g_Swapchain->ImageCount + 1;
     init_info.MSAASamples               = VK_SAMPLE_COUNT_1_BIT;
     init_info.Allocator                 = g_Allocator;
     init_info.CheckVkResultFn           = check_vk_result;
@@ -686,9 +722,9 @@ namespace Sera {
     {
       // Use any command queue
       VkCommandPool command_pool =
-          g_Window->frames[g_Window->FrameIndex].CommandPool;
+          g_Swapchain->Frames[g_Swapchain->FrameIndex].CommandPool;
       VkCommandBuffer command_buffer =
-          g_Window->frames[g_Window->FrameIndex].CommandBuffer;
+          g_Swapchain->Frames[g_Swapchain->FrameIndex].CommandBuffer;
 
       err = vkResetCommandPool(g_Device->device, command_pool, 0);
       check_vk_result(err);
@@ -716,12 +752,6 @@ namespace Sera {
       // ImGui_ImplVulkan_DestroyFontUploadObjects();
     }
     SetuPipeline();
-
-    VkSemaphore image_acquired_semaphore  = GetImageAcquiredSemaphore();
-    VkSemaphore render_complete_semaphore = GetRenderCompleteSemaphore();
-    vkAcquireNextImageKHR(g_Device->device, g_Window->swapchain, UINT64_MAX,
-                          image_acquired_semaphore, VK_NULL_HANDLE,
-                          &g_Window->FrameIndex);
   }
 
   void Application::Shutdown() {
@@ -746,7 +776,7 @@ namespace Sera {
     CleanupVulkanWindow();
     CleanupVulkan();
 
-    glfwDestroyWindow(g_Window->GetHandle());
+    glfwDestroyWindow(m_WindowHandle);
     glfwTerminate();
 
     g_ApplicationRunning = false;
@@ -760,7 +790,7 @@ namespace Sera {
     ImGuiIO                  &io          = ImGui::GetIO();
 
     // Main loop
-    while (!glfwWindowShouldClose(g_Window->GetHandle()) && m_Running) {
+    while (!glfwWindowShouldClose(m_WindowHandle) && m_Running) {
       glfwPollEvents();
 
       for (auto &layer : m_LayerStack) layer->OnUpdate(m_TimeStep);
@@ -768,14 +798,17 @@ namespace Sera {
       // Resize swap chain?
       if (g_SwapChainRebuild) {
         int width, height;
-        glfwGetFramebufferSize(g_Window->GetHandle(), &width, &height);
+        glfwGetFramebufferSize(m_WindowHandle, &width, &height);
         if (width > 0 && height > 0) {
-          ImGui_ImplVulkan_SetMinImageCount(g_MinImageCount);
-          ImGui_ImplVulkanH_CreateOrResizeWindow(
-              g_Instance->instance, g_PhysicalDevice->physicalDevice,
-              g_Device->device, &g_MainWindowData, g_QueueFamily, g_Allocator,
-              width, height, g_MinImageCount);
-          g_MainWindowData.FrameIndex = 0;
+          g_Swapchain->Resize(width, height);
+          g_Swapchain->FrameIndex = 0;
+          InitPools();
+          // ImGui_ImplVulkan_SetMinImageCount(3);
+          // ImGui_ImplVulkanH_CreateOrResizeWindow(
+          //     g_Instance->instance, g_PhysicalDevice->physicalDevice,
+          //     g_Device->device, &g_MainWindowData, g_QueueFamily,
+          //     g_Allocator, width, height, 3);
+          // g_MainWindowData.FrameIndex = 0;
 
           // Clear allocated command buffers from here since entire pool is
           // destroyed
