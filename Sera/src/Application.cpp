@@ -245,6 +245,15 @@ static void SetupVulkanWindow(ImGui_ImplVulkanH_Window *wd,
       wd, g_QueueFamily, g_Allocator, width, height, g_MinImageCount);
 }
 
+static inline VkSemaphore GetImageAcquiredSemaphore() {
+  return g_Window->frameSemaphores[g_Window->SemaphoreIndex]
+      .ImageAcquiredSemaphore;
+}
+static inline VkSemaphore GetRenderCompleteSemaphore() {
+  return g_Window->frameSemaphores[g_Window->SemaphoreIndex]
+      .RenderCompleteSemaphore;
+}
+
 static void CleanupVulkan() {
   vkDestroyDescriptorPool(g_Device->device, g_DescriptorPool, g_Allocator);
 
@@ -290,7 +299,7 @@ static void FrameRender(ImGui_ImplVulkanH_Window *wd, ImDrawData *draw_data) {
           .RenderCompleteSemaphore;
   err = vkAcquireNextImageKHR(g_Device->device, g_Window->swapchain, UINT64_MAX,
                               image_acquired_semaphore, VK_NULL_HANDLE,
-                              &wd->FrameIndex);
+                              &g_Window->FrameIndex);
   if (err == VK_ERROR_OUT_OF_DATE_KHR || err == VK_SUBOPTIMAL_KHR) {
     g_SwapChainRebuild = true;
     return;
@@ -707,6 +716,12 @@ namespace Sera {
       // ImGui_ImplVulkan_DestroyFontUploadObjects();
     }
     SetuPipeline();
+
+    VkSemaphore image_acquired_semaphore  = GetImageAcquiredSemaphore();
+    VkSemaphore render_complete_semaphore = GetRenderCompleteSemaphore();
+    vkAcquireNextImageKHR(g_Device->device, g_Window->swapchain, UINT64_MAX,
+                          image_acquired_semaphore, VK_NULL_HANDLE,
+                          &g_Window->FrameIndex);
   }
 
   void Application::Shutdown() {

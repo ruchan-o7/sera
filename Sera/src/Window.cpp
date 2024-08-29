@@ -6,10 +6,6 @@
 #include "Log.h"
 #include "vulkan/vulkan_core.h"
 namespace Sera {
-  void    createImage(uint32_t width, uint32_t height, VkFormat format,
-                      VkImageTiling tiling, VkImageUsageFlags usage,
-                      VkMemoryPropertyFlags properties, VkImage& image,
-                      VkDeviceMemory& imageMemory);
   Window* Window::Create(VulkanInstance*        instance,
                          VulkanPhysicalDevice*  pDevice,
                          VkAllocationCallbacks* allocator, VulkanDevice* device,
@@ -330,8 +326,4 @@ namespace Sera {
   }
   void Window::Close() {}
   Window::~Window() {}
-  void createImage(uint32_t width, uint32_t height, VkFormat format,
-                   VkImageTiling tiling, VkImageUsageFlags usage,
-                   VkMemoryPropertyFlags properties, VkImage& image,
-                   VkDeviceMemory& imageMemory) {}
 }  // namespace Sera
