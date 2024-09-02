@@ -3,7 +3,6 @@
 #include "Backend/VulkanDevice.h"
 #include "Backend/VulkanInstance.h"
 #include "Backend/VulkanPhysicalDevice.h"
-#include "vulkan/vulkan_core.h"
 namespace Sera {
   struct Frame {
       VkCommandPool   CommandPool    = VK_NULL_HANDLE;
@@ -14,7 +13,7 @@ namespace Sera {
       VkFramebuffer   Framebuffer    = VK_NULL_HANDLE;
   };
   struct FrameSemaphores {
-      VkSemaphore ImageAcquiredSemaphore  = VK_NULL_HANDLE;
+      VkSemaphore ImageAvailableSemaphore = VK_NULL_HANDLE;
       VkSemaphore RenderCompleteSemaphore = VK_NULL_HANDLE;
   };
 
@@ -50,14 +49,14 @@ namespace Sera {
                     // variable and type
       uint32_t           ImageCount     = 0;
       uint32_t           SemaphoreCount = 0;
-      uint32_t           SemaphoreIndex = 0;
-      uint32_t           FrameIndex     = 0;
+      uint32_t           CurrentFrame   = 0;
+      uint32_t           ImageIndex     = 0;
       VkSurfaceFormatKHR SurfaceFormat;
 
     private:
       void CreateDepths();
       void ReCreate();
-      void InitializePools();
+      void InitializeFenceSemaphore();
 
     private:
       VkSwapchainKHR         m_Swapchain = VK_NULL_HANDLE;

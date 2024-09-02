@@ -71,10 +71,6 @@ static bool                     g_SwapChainRebuild = false;
 static std::vector<std::vector<VkCommandBuffer>> s_AllocatedCommandBuffers;
 static std::vector<std::vector<std::function<void()>>> s_ResourceFreeQueue;
 
-// Unlike g_MainWindowData.FrameIndex, this is not the the swapchain image index
-// and is always guaranteed to increase (eg. 0, 1, 2, 0, 1, 2)
-static uint32_t s_CurrentFrameIndex = 0;
-
 static Sera::Application *s_Instance = nullptr;
 
 void check_vk_result(VkResult err) {
@@ -225,23 +221,6 @@ static void InitPools() {
                                      &frame->CommandBuffer);
       check_vk_result(err);
     }
-    {
-      VkFenceCreateInfo info = {};
-      info.sType             = VK_STRUCTURE_TYPE_FENCE_CREATE_INFO;
-      info.flags             = VK_FENCE_CREATE_SIGNALED_BIT;
-      err = vkCreateFence(g_Device->device, &info, g_Allocator, &frame->Fence);
-      check_vk_result(err);
-    }
-  }
-  for (int i = 0; i < g_Swapchain->SemaphoreCount; i++) {
-    auto                 *frame = &g_Swapchain->FrameSemaphoress[i];
-    VkSemaphoreCreateInfo info{};
-    info.sType = VK_STRUCTURE_TYPE_SEMAPHORE_CREATE_INFO;
-    err        = vkCreateSemaphore(g_Device->device, &info, g_Allocator,
-                                   &frame->ImageAcquiredSemaphore);
-
-    err = vkCreateSemaphore(g_Device->device, &info, g_Allocator,
-                            &frame->RenderCompleteSemaphore);
   }
 }
 static void SetupVulkanWindow(int width, int height) {
@@ -278,11 +257,11 @@ static void SetupVulkanWindow(int width, int height) {
 }
 
 static inline VkSemaphore GetImageAcquiredSemaphore() {
-  return g_Swapchain->FrameSemaphoress[g_Swapchain->SemaphoreIndex]
-      .ImageAcquiredSemaphore;
+  return g_Swapchain->FrameSemaphoress[g_Swapchain->CurrentFrame]
+      .ImageAvailableSemaphore;
 }
 static inline VkSemaphore GetRenderCompleteSemaphore() {
-  return g_Swapchain->FrameSemaphoress[g_Swapchain->SemaphoreIndex]
+  return g_Swapchain->FrameSemaphoress[g_Swapchain->CurrentFrame]
       .RenderCompleteSemaphore;
 }
 
@@ -320,49 +299,39 @@ static void CleanupVulkanWindow() {
                                   &g_MainWindowData, g_Allocator);
 }
 
-static void FrameRender(ImGui_ImplVulkanH_Window *wd, ImDrawData *draw_data) {
+static void FrameRender(ImDrawData *draw_data) {
   VkResult err;
 
-  VkSemaphore image_acquired_semaphore =
-      g_Swapchain->FrameSemaphoress[g_Swapchain->SemaphoreIndex]
-          .ImageAcquiredSemaphore;
-  VkSemaphore render_complete_semaphore =
-      g_Swapchain->FrameSemaphoress[g_Swapchain->SemaphoreIndex]
-          .RenderCompleteSemaphore;
+  Sera::Frame *frameData = &g_Swapchain->Frames[g_Swapchain->CurrentFrame];
+
+  auto image_acquired_semaphore = GetImageAcquiredSemaphore();
+
+  err = vkWaitForFences(g_Device->device, 1, &frameData->Fence, VK_TRUE,
+                        UINT64_MAX);
+
   err = vkAcquireNextImageKHR(g_Device->device, g_Swapchain->Get(), UINT64_MAX,
                               image_acquired_semaphore, VK_NULL_HANDLE,
-                              &g_Swapchain->FrameIndex);
+                              &g_Swapchain->ImageIndex);
   if (err == VK_ERROR_OUT_OF_DATE_KHR || err == VK_SUBOPTIMAL_KHR) {
     g_SwapChainRebuild = true;
     return;
   }
   check_vk_result(err);
 
-  s_CurrentFrameIndex = (s_CurrentFrameIndex + 1) % g_Swapchain->ImageCount;
-
-  Sera::Frame *frameData = &g_Swapchain->Frames[g_Swapchain->FrameIndex];
-
-  {
-    err = vkWaitForFences(
-        g_Device->device, 1, &frameData->Fence, VK_TRUE,
-        UINT64_MAX);  // wait indefinitely instead of periodically checking
-    check_vk_result(err);
-
-    err = vkResetFences(g_Device->device, 1, &frameData->Fence);
-    check_vk_result(err);
-  }
+  err = vkResetFences(g_Device->device, 1, &frameData->Fence);
+  check_vk_result(err);
 
   {
     // Free resources in queue
-    for (auto &func : s_ResourceFreeQueue[s_CurrentFrameIndex]) func();
-    s_ResourceFreeQueue[s_CurrentFrameIndex].clear();
+    for (auto &func : s_ResourceFreeQueue[g_Swapchain->CurrentFrame]) func();
+    s_ResourceFreeQueue[g_Swapchain->CurrentFrame].clear();
   }
   {
     // Free command buffers allocated by Application::GetCommandBuffer
     // These use g_MainWindowData.FrameIndex and not s_CurrentFrameIndex because
     // they're tied to the swapchain image index
     auto &allocatedCommandBuffers =
-        s_AllocatedCommandBuffers[g_Swapchain->FrameIndex];
+        s_AllocatedCommandBuffers[g_Swapchain->CurrentFrame];
     if (allocatedCommandBuffers.size() > 0) {
       vkFreeCommandBuffers(g_Device->device, frameData->CommandPool,
                            (uint32_t)allocatedCommandBuffers.size(),
@@ -424,6 +393,7 @@ static void FrameRender(ImGui_ImplVulkanH_Window *wd, ImDrawData *draw_data) {
   // Submit command buffer
   vkCmdEndRenderPass(frameData->CommandBuffer);
   {
+    auto render_complete_semaphore = GetRenderCompleteSemaphore();
     VkPipelineStageFlags wait_stage =
         VK_PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT_BIT;
     VkSubmitInfo info         = {};
@@ -446,27 +416,14 @@ static void FrameRender(ImGui_ImplVulkanH_Window *wd, ImDrawData *draw_data) {
 static void FramePresent(ImGui_ImplVulkanH_Window *wd) {
   if (g_SwapChainRebuild) return;
 
-  VkSemaphore render_complete_semaphore =
-      g_Swapchain->FrameSemaphoress[g_Swapchain->SemaphoreIndex]
-          .RenderCompleteSemaphore;
-  VkPresentInfoKHR info   = {};
-  info.sType              = VK_STRUCTURE_TYPE_PRESENT_INFO_KHR;
-  info.waitSemaphoreCount = 1;
-  info.pWaitSemaphores    = &render_complete_semaphore;
-  info.swapchainCount     = 1;
-  auto sc                 = g_Swapchain->Get();
-  info.pSwapchains        = &sc;
-  info.pImageIndices      = &g_Swapchain->FrameIndex;
-  VkResult err =
-      g_Swapchain->Present(g_Queue);  // vkQueuePresentKHR(g_Queue, &info);
+  auto err = g_Swapchain->Present(g_Queue);
   if (err == VK_ERROR_OUT_OF_DATE_KHR || err == VK_SUBOPTIMAL_KHR) {
     g_SwapChainRebuild = true;
     return;
   }
   check_vk_result(err);
-  g_Swapchain->SemaphoreIndex =
-      (g_Swapchain->SemaphoreIndex + 1) %
-      g_Swapchain->ImageCount;  // Now we can use the next set of semaphores
+  g_Swapchain->CurrentFrame =
+      (g_Swapchain->CurrentFrame + 1) % g_Swapchain->ImageCount;
 }
 
 static void glfw_error_callback(int error, const char *description) {
@@ -722,9 +679,9 @@ namespace Sera {
     {
       // Use any command queue
       VkCommandPool command_pool =
-          g_Swapchain->Frames[g_Swapchain->FrameIndex].CommandPool;
+          g_Swapchain->Frames[g_Swapchain->CurrentFrame].CommandPool;
       VkCommandBuffer command_buffer =
-          g_Swapchain->Frames[g_Swapchain->FrameIndex].CommandBuffer;
+          g_Swapchain->Frames[g_Swapchain->CurrentFrame].CommandBuffer;
 
       err = vkResetCommandPool(g_Device->device, command_pool, 0);
       check_vk_result(err);
@@ -801,14 +758,14 @@ namespace Sera {
         glfwGetFramebufferSize(m_WindowHandle, &width, &height);
         if (width > 0 && height > 0) {
           g_Swapchain->Resize(width, height);
-          g_Swapchain->FrameIndex = 0;
+          g_Swapchain->CurrentFrame = 0;
           InitPools();
           // ImGui_ImplVulkan_SetMinImageCount(3);
           // ImGui_ImplVulkanH_CreateOrResizeWindow(
           //     g_Instance->instance, g_PhysicalDevice->physicalDevice,
           //     g_Device->device, &g_MainWindowData, g_QueueFamily,
           //     g_Allocator, width, height, 3);
-          // g_MainWindowData.FrameIndex = 0;
+          // g_MainWindowData.CurrentFrame = 0;
 
           // Clear allocated command buffers from here since entire pool is
           // destroyed
@@ -892,7 +849,7 @@ namespace Sera {
       wd->ClearValue.color.float32[1] = clear_color.y * clear_color.w;
       wd->ClearValue.color.float32[2] = clear_color.z * clear_color.w;
       wd->ClearValue.color.float32[3] = clear_color.w;
-      if (!main_is_minimized) FrameRender(wd, main_draw_data);
+      if (!main_is_minimized) FrameRender(main_draw_data);
 
       // Update and Render additional Platform Windows
       if (io.ConfigFlags & ImGuiConfigFlags_ViewportsEnable) {
@@ -934,8 +891,6 @@ namespace Sera {
     cmdBufAllocateInfo.level              = VK_COMMAND_BUFFER_LEVEL_PRIMARY;
     cmdBufAllocateInfo.commandBufferCount = 1;
 
-    // VkCommandBuffer &command_buffer =
-    //     s_AllocatedCommandBuffers[wd->FrameIndex].emplace_back();
     // FIXME: Fix this command buffer allocation
     VkCommandBuffer
          command_buffer;  //= s_AllocatedCommandBuffers[wd->FrameIndex];
@@ -980,7 +935,7 @@ namespace Sera {
   }
 
   void Application::SubmitResourceFree(std::function<void()> &&func) {
-    s_ResourceFreeQueue[s_CurrentFrameIndex].emplace_back(func);
+    s_ResourceFreeQueue[g_Swapchain->CurrentFrame].emplace_back(func);
   }
 
 }  // namespace Sera

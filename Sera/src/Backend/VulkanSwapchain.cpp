@@ -3,7 +3,6 @@
 #include <cstdlib>
 #include "Backend/VulkanPhysicalDevice.h"
 #include "Log.h"
-#include "vulkan/vulkan_core.h"
 namespace Sera {
   static void DestroyFrame(VkDevice device, Frame* frame,
                            VkAllocationCallbacks* allocator) {
@@ -19,9 +18,9 @@ namespace Sera {
   }
   static void DestroyFrameSemaphores(VkDevice device, FrameSemaphores* frame,
                                      VkAllocationCallbacks* allocator) {
-    vkDestroySemaphore(device, frame->ImageAcquiredSemaphore, allocator);
+    vkDestroySemaphore(device, frame->ImageAvailableSemaphore, allocator);
     vkDestroySemaphore(device, frame->RenderCompleteSemaphore, allocator);
-    frame->ImageAcquiredSemaphore = frame->RenderCompleteSemaphore =
+    frame->ImageAvailableSemaphore = frame->RenderCompleteSemaphore =
         VK_NULL_HANDLE;
   }
 
@@ -53,7 +52,6 @@ namespace Sera {
           m_PhysicalDevice->physicalDevice, m_Surface, &present_modes[0],
           IM_ARRAYSIZE(present_modes));
     }
-    //! TODO: Check errors for deleting old swapchain
     VkSwapchainKHR oldSwapchain = m_Swapchain;
     m_Swapchain                 = VK_NULL_HANDLE;
     auto err                    = m_Device->WaitIdle();
@@ -106,32 +104,30 @@ namespace Sera {
     }
     err = vkCreateSwapchainKHR(m_Device->device, &info, m_Allocator,
                                &m_Swapchain);
-    if (err != VK_SUCCESS) {
-      SR_CORE_ERROR("Could not create swapchain");
-    }
+    if (err != VK_SUCCESS) SR_CORE_ERROR("Could not create swapchain");
+
     err = vkGetSwapchainImagesKHR(m_Device->device, m_Swapchain, &ImageCount,
                                   nullptr);
-    if (err != VK_SUCCESS) {
+    if (err != VK_SUCCESS)
       SR_CORE_ERROR("Could not get swapchain swapchain images");
-    }
 
     VkImage backbuffers[16] = {};
-    IM_ASSERT(ImageCount >= minImageCount);
-    IM_ASSERT(ImageCount < IM_ARRAYSIZE(backbuffers));
     err = vkGetSwapchainImagesKHR(m_Device->device, m_Swapchain, &ImageCount,
                                   backbuffers);
-    if (err != VK_SUCCESS) {
+    if (err != VK_SUCCESS)
       SR_CORE_ERROR("Could not get swapchain swapchain images");
-    }
-    SemaphoreCount = ImageCount + 1;
+
+    SemaphoreCount = ImageCount;  //+ 1;
     Frames         = (Frame*)malloc(sizeof(Frame) * ImageCount);
     FrameSemaphoress =
         (FrameSemaphores*)malloc(sizeof(FrameSemaphores) * SemaphoreCount);
 
     memset(Frames, 0, sizeof(Frames[0]) * ImageCount);
     memset(FrameSemaphoress, 0, sizeof(FrameSemaphoress[0]) * SemaphoreCount);
+
     for (uint32_t i = 0; i < ImageCount; i++)
       Frames[i].Backbuffer = backbuffers[i];
+
     if (oldSwapchain)
       vkDestroySwapchainKHR(m_Device->device, oldSwapchain, m_Allocator);
 
@@ -155,9 +151,10 @@ namespace Sera {
         if (err != VK_SUCCESS) SR_CORE_ERROR("Could not create image view");
       }
     }
-    //! DONT FORGET TO FREE OLD DEPTHS
+    // FIXME: ! DONT FORGET TO FREE OLD DEPTHS
     CreateDepths();
     CreateFramebuffer(VK_NULL_HANDLE);
+    InitializeFenceSemaphore();
   }
   void VulkanSwapchain::CreateDepths() {
     VkImageCreateInfo imageInfo{};
@@ -250,14 +247,41 @@ namespace Sera {
   }
   VkResult VulkanSwapchain::Present(VkQueue queue) {
     VkSemaphore render_complete_semaphore =
-        FrameSemaphoress[SemaphoreIndex].RenderCompleteSemaphore;
-    VkPresentInfoKHR info   = {};
-    info.sType              = VK_STRUCTURE_TYPE_PRESENT_INFO_KHR;
+        FrameSemaphoress[CurrentFrame].RenderCompleteSemaphore;
+    VkPresentInfoKHR info = {};
+    info.sType            = VK_STRUCTURE_TYPE_PRESENT_INFO_KHR;
+
     info.waitSemaphoreCount = 1;
     info.pWaitSemaphores    = &render_complete_semaphore;
-    info.swapchainCount     = 1;
-    info.pSwapchains        = &m_Swapchain;
-    info.pImageIndices      = &FrameIndex;
+
+    VkSwapchainKHR swapchain[] = {m_Swapchain};
+    info.swapchainCount        = 1;
+    info.pSwapchains           = swapchain;
+
+    info.pImageIndices = &ImageIndex;
     return vkQueuePresentKHR(queue, &info);
+  }
+
+  void VulkanSwapchain::InitializeFenceSemaphore() {
+    VkFenceCreateInfo f{};
+    f.sType = VK_STRUCTURE_TYPE_FENCE_CREATE_INFO;
+    f.pNext = nullptr;
+    f.flags = VK_FENCE_CREATE_SIGNALED_BIT;
+    for (uint32_t i = 0; i < ImageCount; i++) {
+      vkCreateFence(m_Device->device, &f, m_Allocator, &Frames[i].Fence);
+    }
+    VkSemaphoreCreateInfo info{};
+    info.sType = VK_STRUCTURE_TYPE_SEMAPHORE_CREATE_INFO;
+    info.pNext = nullptr;
+    info.flags = 0;
+    for (int i = 0; i < SemaphoreCount; i++) {
+      auto* frame = &FrameSemaphoress[i];
+
+      auto err = vkCreateSemaphore(m_Device->device, &info, m_Allocator,
+                                   &frame->ImageAvailableSemaphore);
+
+      err = vkCreateSemaphore(m_Device->device, &info, m_Allocator,
+                              &frame->RenderCompleteSemaphore);
+    }
   }
 }  // namespace Sera
