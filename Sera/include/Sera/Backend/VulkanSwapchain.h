@@ -40,6 +40,8 @@ namespace Sera {
       VkSwapchainKHR Get() const { return m_Swapchain; }
       void           CreateFramebuffer(VkRenderPass rp);
       VkResult       Present(VkQueue queue);
+      int32_t        GetWidth() const { return m_Width; }
+      int32_t        GetHeight() const { return m_Height; }
       //   void CreateCommandBuffers();
 
     public:

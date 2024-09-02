@@ -352,15 +352,13 @@ static void FrameRender(ImDrawData *draw_data) {
     clearValues[0].color = {
         {0.0f, 0.0f, 0.0f, 1.0f}
     };
-    clearValues[1].depthStencil = {1.0f, 0};
-    int w, h;
-    glfwGetFramebufferSize(s_Instance->GetWindowHandle(), &w, &h);
+    clearValues[1].depthStencil   = {1.0f, 0};
     VkRenderPassBeginInfo info    = {};
     info.sType                    = VK_STRUCTURE_TYPE_RENDER_PASS_BEGIN_INFO;
     info.renderPass               = g_Renderpass;
     info.framebuffer              = frameData->Framebuffer;
-    info.renderArea.extent.width  = w;
-    info.renderArea.extent.height = h;
+    info.renderArea.extent.width  = g_Swapchain->GetWidth();
+    info.renderArea.extent.height = g_Swapchain->GetHeight();
     info.clearValueCount          = clearValues.size();
     info.pClearValues             = clearValues.data();
     vkCmdBeginRenderPass(frameData->CommandBuffer, &info,
@@ -757,16 +755,10 @@ namespace Sera {
         int width, height;
         glfwGetFramebufferSize(m_WindowHandle, &width, &height);
         if (width > 0 && height > 0) {
+          g_Device->WaitIdle();
           g_Swapchain->Resize(width, height);
           g_Swapchain->CurrentFrame = 0;
           InitPools();
-          // ImGui_ImplVulkan_SetMinImageCount(3);
-          // ImGui_ImplVulkanH_CreateOrResizeWindow(
-          //     g_Instance->instance, g_PhysicalDevice->physicalDevice,
-          //     g_Device->device, &g_MainWindowData, g_QueueFamily,
-          //     g_Allocator, width, height, 3);
-          // g_MainWindowData.CurrentFrame = 0;
-
           // Clear allocated command buffers from here since entire pool is
           // destroyed
           s_AllocatedCommandBuffers.clear();
