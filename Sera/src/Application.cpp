@@ -218,6 +218,7 @@ static void CleanupVulkan() {
   vkDestroyDescriptorPool(g_Device->device, g_DescriptorPool, g_Allocator);
   delete g_Renderpass;
   delete g_Swapchain;
+  vkDestroySurfaceKHR(g_Instance->instance, g_Surface, g_Allocator);
   delete g_Pipeline;
   delete g_Device;
   delete g_Instance;
