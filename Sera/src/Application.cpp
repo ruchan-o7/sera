@@ -1,4 +1,5 @@
 #include "Application.h"
+#include "Backend/VulkanRenderpass.h"
 #include "Backend/VulkanSwapchain.h"
 #include "Log.h"
 #include "Backend/VulkanInstance.h"
@@ -58,7 +59,7 @@ static VkPipelineCache              g_PipelineCache          = VK_NULL_HANDLE;
 static VkDescriptorPool             g_DescriptorPool         = VK_NULL_HANDLE;
 static VkPipeline                   g_GraphicPipeline        = VK_NULL_HANDLE;
 static VkPipelineLayout             g_GraphicsPipelineLayout = VK_NULL_HANDLE;
-static VkRenderPass                 g_Renderpass             = VK_NULL_HANDLE;
+static Sera::VulkanRenderPass      *g_Renderpass             = nullptr;
 static VkSurfaceKHR                 g_Surface                = VK_NULL_HANDLE;
 static VkSurfaceFormatKHR           g_SurfaceFormat;
 static std::vector<VkCommandBuffer> g_CommandBuffers;
@@ -134,67 +135,12 @@ static void SetupVulkan(const char **extensions, uint32_t extensions_count) {
   }
 }
 static void SetupRenderpass() {
-  VkAttachmentDescription colorAttachment{};
-  colorAttachment.format         = g_SurfaceFormat.format;
-  colorAttachment.samples        = VK_SAMPLE_COUNT_1_BIT;
-  colorAttachment.loadOp         = VK_ATTACHMENT_LOAD_OP_CLEAR;
-  colorAttachment.storeOp        = VK_ATTACHMENT_STORE_OP_STORE;
-  colorAttachment.stencilLoadOp  = VK_ATTACHMENT_LOAD_OP_DONT_CARE;
-  colorAttachment.stencilStoreOp = VK_ATTACHMENT_STORE_OP_DONT_CARE;
-  colorAttachment.initialLayout  = VK_IMAGE_LAYOUT_UNDEFINED;
-  colorAttachment.finalLayout    = VK_IMAGE_LAYOUT_PRESENT_SRC_KHR;
-
-  VkAttachmentDescription depthAttachment{};
-  depthAttachment.format         = VK_FORMAT_D32_SFLOAT;
-  depthAttachment.samples        = VK_SAMPLE_COUNT_1_BIT;
-  depthAttachment.loadOp         = VK_ATTACHMENT_LOAD_OP_CLEAR;
-  depthAttachment.storeOp        = VK_ATTACHMENT_STORE_OP_DONT_CARE;
-  depthAttachment.stencilLoadOp  = VK_ATTACHMENT_LOAD_OP_DONT_CARE;
-  depthAttachment.stencilStoreOp = VK_ATTACHMENT_STORE_OP_DONT_CARE;
-  depthAttachment.initialLayout  = VK_IMAGE_LAYOUT_UNDEFINED;
-  depthAttachment.finalLayout =
-      VK_IMAGE_LAYOUT_DEPTH_STENCIL_ATTACHMENT_OPTIMAL;
-
-  VkAttachmentReference colorAttachmentRef{};
-  colorAttachmentRef.attachment = 0;
-  colorAttachmentRef.layout     = VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL;
-
-  VkAttachmentReference depthAttachmentRef{};
-  depthAttachmentRef.attachment = 1;
-  depthAttachmentRef.layout = VK_IMAGE_LAYOUT_DEPTH_STENCIL_ATTACHMENT_OPTIMAL;
-
-  VkSubpassDescription subpass{};
-  subpass.pipelineBindPoint       = VK_PIPELINE_BIND_POINT_GRAPHICS;
-  subpass.colorAttachmentCount    = 1;
-  subpass.pColorAttachments       = &colorAttachmentRef;
-  subpass.pDepthStencilAttachment = &depthAttachmentRef;
-
-  VkSubpassDependency dependency{};
-  dependency.srcSubpass   = VK_SUBPASS_EXTERNAL;
-  dependency.dstSubpass   = 0;
-  dependency.srcStageMask = VK_PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT_BIT |
-                            VK_PIPELINE_STAGE_EARLY_FRAGMENT_TESTS_BIT;
-  dependency.srcAccessMask = 0;
-  dependency.dstStageMask  = VK_PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT_BIT |
-                            VK_PIPELINE_STAGE_EARLY_FRAGMENT_TESTS_BIT;
-  dependency.dstAccessMask = VK_ACCESS_COLOR_ATTACHMENT_WRITE_BIT |
-                             VK_ACCESS_DEPTH_STENCIL_ATTACHMENT_WRITE_BIT;
-
-  std::array<VkAttachmentDescription, 2> attachments = {colorAttachment,
-                                                        depthAttachment};
-  VkRenderPassCreateInfo                 renderPassInfo{};
-  renderPassInfo.sType           = VK_STRUCTURE_TYPE_RENDER_PASS_CREATE_INFO;
-  renderPassInfo.attachmentCount = static_cast<uint32_t>(attachments.size());
-  renderPassInfo.pAttachments    = attachments.data();
-  renderPassInfo.subpassCount    = 1;
-  renderPassInfo.pSubpasses      = &subpass;
-  renderPassInfo.dependencyCount = 1;
-  renderPassInfo.pDependencies   = &dependency;
-
-  auto err = vkCreateRenderPass(g_Device->device, &renderPassInfo, nullptr,
-                                &g_Renderpass);
-  if (err != VK_SUCCESS) SR_CORE_ERROR("Could not load renderpass");
-  g_Swapchain->CreateFramebuffer(g_Renderpass);
+  Sera::VulkanRenderPass::CreateInfo info{};
+  info.allocator     = g_Allocator;
+  info.device        = g_Device;
+  info.surfaceFormat = g_Swapchain->SurfaceFormat;
+  g_Renderpass       = Sera::VulkanRenderPass::Create(info);
+  g_Swapchain->CreateFramebuffer(g_Renderpass->GetHandle());
 }
 // All the ImGui_ImplVulkanH_XXX structures/functions are optional helpers used
 // by the demo. Your real engine/app may not use them.
@@ -267,6 +213,7 @@ static inline VkSemaphore GetRenderCompleteSemaphore() {
 
 static void CleanupVulkan() {
   vkDestroyDescriptorPool(g_Device->device, g_DescriptorPool, g_Allocator);
+  delete g_Renderpass;
 
 #ifdef IMGUI_VULKAN_DEBUG_REPORT
   // Remove the debug report callback
@@ -355,7 +302,7 @@ static void FrameRender(ImDrawData *draw_data) {
     clearValues[1].depthStencil   = {1.0f, 0};
     VkRenderPassBeginInfo info    = {};
     info.sType                    = VK_STRUCTURE_TYPE_RENDER_PASS_BEGIN_INFO;
-    info.renderPass               = g_Renderpass;
+    info.renderPass               = g_Renderpass->GetHandle();
     info.framebuffer              = frameData->Framebuffer;
     info.renderArea.extent.width  = g_Swapchain->GetWidth();
     info.renderArea.extent.height = g_Swapchain->GetHeight();
@@ -554,7 +501,7 @@ static void SetuPipeline() {
   pipelineInfo.pColorBlendState    = &colorBlending;
   pipelineInfo.pDynamicState       = &dynamicState;
   pipelineInfo.layout              = g_GraphicsPipelineLayout;
-  pipelineInfo.renderPass          = g_Renderpass;
+  pipelineInfo.renderPass          = g_Renderpass->GetHandle();
   pipelineInfo.subpass             = 0;
   pipelineInfo.basePipelineHandle  = VK_NULL_HANDLE;
   pipelineInfo.pDepthStencilState  = &depthStencil;
@@ -663,7 +610,7 @@ namespace Sera {
     init_info.MSAASamples               = VK_SAMPLE_COUNT_1_BIT;
     init_info.Allocator                 = g_Allocator;
     init_info.CheckVkResultFn           = check_vk_result;
-    init_info.RenderPass                = g_Renderpass;  // wd->RenderPass;
+    init_info.RenderPass = g_Renderpass->GetHandle();  // wd->RenderPass;
     ImGui_ImplVulkan_Init(&init_info);
 
     // Load default font
