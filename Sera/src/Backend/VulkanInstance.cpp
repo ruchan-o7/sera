@@ -4,6 +4,10 @@
 namespace Sera {
   static constexpr std::array<const char*, 1> ValidationLayerNames = {
       "VK_LAYER_KHRONOS_validation"};
+  VulkanInstance::~VulkanInstance() {
+    FreeDebug(instance);
+    vkDestroyInstance(instance, instanceSpecs.allocCallbacks);
+  }
   VulkanInstance::VulkanInstance(Specs specs) : instanceSpecs(specs) {
     VkResult res = VK_SUCCESS;
     {

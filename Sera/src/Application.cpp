@@ -214,17 +214,9 @@ static inline VkSemaphore GetRenderCompleteSemaphore() {
 static void CleanupVulkan() {
   vkDestroyDescriptorPool(g_Device->device, g_DescriptorPool, g_Allocator);
   delete g_Renderpass;
-
-#ifdef IMGUI_VULKAN_DEBUG_REPORT
-  // Remove the debug report callback
-  auto vkDestroyDebugReportCallbackEXT =
-      (PFN_vkDestroyDebugReportCallbackEXT)vkGetInstanceProcAddr(
-          g_Instance, "vkDestroyDebugReportCallbackEXT");
-  vkDestroyDebugReportCallbackEXT(g_Instance, g_DebugReport, g_Allocator);
-#endif  // IMGUI_VULKAN_DEBUG_REPORT
-
-  vkDestroyDevice(g_Device->device, g_Allocator);
-  vkDestroyInstance(g_Instance->instance, g_Allocator);
+  delete g_Swapchain;
+  delete g_Device;
+  delete g_Instance;
 }
 
 void read_file(const char *path, std::vector<char> &out) {

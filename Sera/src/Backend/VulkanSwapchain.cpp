@@ -23,6 +23,21 @@ namespace Sera {
     frame->ImageAvailableSemaphore = frame->RenderCompleteSemaphore =
         VK_NULL_HANDLE;
   }
+  VulkanSwapchain::~VulkanSwapchain() {
+    for (uint32_t i = 0; i < ImageCount; i++)
+      DestroyFrame(m_Device->device, &Frames[i], m_Allocator);
+
+    for (uint32_t i = 0; i < SemaphoreCount; i++)
+      DestroyFrameSemaphores(m_Device->device, &FrameSemaphoress[i],
+                             m_Allocator);
+
+    free(Frames);
+    free(FrameSemaphoress);
+    vkDestroySwapchainKHR(m_Device->device, m_Swapchain, m_Allocator);
+    vkDestroyImage(m_Device->device, m_DepthBuffer.Image, m_Allocator);
+    vkDestroyImageView(m_Device->device, m_DepthBuffer.ImageView, m_Allocator);
+    vkFreeMemory(m_Device->device, m_DepthBuffer.Memory, m_Allocator);
+  }
 
   VulkanSwapchain::VulkanSwapchain(VulkanInstance*        instance,
                                    VulkanPhysicalDevice*  pDevice,

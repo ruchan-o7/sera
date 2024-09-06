@@ -1,7 +1,7 @@
 #include "Backend/VulkanDevice.h"
 #include "Log.h"
-#include "vulkan/vulkan_core.h"
 namespace Sera {
+  VulkanDevice::~VulkanDevice() { vkDestroyDevice(device, allocator); }
   VulkanDevice::VulkanDevice(const VulkanPhysicalDevice*  pDevice,
                              const VkAllocationCallbacks* vkAllocator,
                              uint32_t                     queueFamily,

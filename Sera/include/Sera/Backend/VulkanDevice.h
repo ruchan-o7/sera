@@ -8,6 +8,7 @@ namespace Sera {
                    const VkAllocationCallbacks* vkAllocator,
                    uint32_t queueFamily, std::vector<const char*>& extensions,
                    void* pNext = nullptr);
+      ~VulkanDevice();
 
       VkResult WaitIdle() { return vkDeviceWaitIdle(device); }
 

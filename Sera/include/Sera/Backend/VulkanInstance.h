@@ -18,6 +18,7 @@ namespace Sera {
           void* pNext            = nullptr;
       };
       VulkanInstance(Specs specs);
+      ~VulkanInstance();
 
       bool EnumerateInstanceExtension(
           const char*                         layerName,

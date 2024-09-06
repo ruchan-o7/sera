@@ -28,6 +28,7 @@ namespace Sera {
         return new VulkanSwapchain(instance, pDevice, allocator, device,
                                    isVsync, surfaceFormat, surface);
       }
+      ~VulkanSwapchain();
       void Resize(int w, int h) {
         m_Width  = w;
         m_Height = h;
