@@ -1,6 +1,7 @@
 #include "Backend/VulkanInstance.h"
 #include "Backend/VulkanDebug.h"
 #include "Log.h"
+#include <array>
 namespace Sera {
   static constexpr std::array<const char*, 1> ValidationLayerNames = {
       "VK_LAYER_KHRONOS_validation"};
