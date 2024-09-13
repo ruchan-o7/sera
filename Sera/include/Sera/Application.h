@@ -7,11 +7,6 @@
 #include <string>
 #include <vector>
 
-#include <imgui.h>
-#include <vulkan/vulkan.h>
-
-void check_vk_result(VkResult err);
-
 struct GLFWwindow;
 
 namespace Sera {
@@ -51,15 +46,6 @@ namespace Sera {
 
       float       GetTime();
       GLFWwindow *GetWindowHandle() const { return m_WindowHandle; };
-
-      static VkInstance       GetInstance();
-      static VkPhysicalDevice GetPhysicalDevice();
-      static VkDevice         GetDevice();
-
-      static VkCommandBuffer GetCommandBuffer(bool begin);
-      static void            FlushCommandBuffer(VkCommandBuffer commandBuffer);
-
-      static void SubmitResourceFree(std::function<void()> &&func);
 
     private:
       void Init();
