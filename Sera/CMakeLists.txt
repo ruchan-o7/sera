@@ -10,31 +10,30 @@ file(GLOB_RECURSE
 		src/*.cpp
 		src/Input/*.cpp
 )
-set(IMGUI_DIR "${CMAKE_SOURCE_DIR}/vendor/imgui")
-set(IMGUI_SRCS 
-	"${IMGUI_DIR}/imgui.cpp"
-	"${IMGUI_DIR}/imgui_demo.cpp"
-	"${IMGUI_DIR}/imgui_draw.cpp"
-	"${IMGUI_DIR}/imgui_tables.cpp"
-	"${IMGUI_DIR}/imgui_widgets.cpp"
-)
-set(IMGUI_BACKEND 
-	"${IMGUI_DIR}/backends/imgui_impl_glfw.cpp"
-	"${IMGUI_DIR}/backends/imgui_impl_vulkan.cpp"
-)
+# set(IMGUI_DIR "${CMAKE_SOURCE_DIR}/vendor/imgui")
+# set(IMGUI_SRCS 
+# 	"${IMGUI_DIR}/imgui.cpp"
+# 	"${IMGUI_DIR}/imgui_demo.cpp"
+# 	"${IMGUI_DIR}/imgui_draw.cpp"
+# 	"${IMGUI_DIR}/imgui_tables.cpp"
+# 	"${IMGUI_DIR}/imgui_widgets.cpp"
+# )
+# set(IMGUI_BACKEND 
+# 	"${IMGUI_DIR}/backends/imgui_impl_glfw.cpp"
+# 	"${IMGUI_DIR}/backends/imgui_impl_vulkan.cpp"
+# )
 
 if(BUILD_SERA_DLL)
 	message("${PROJECT_NAME} building as shared library")
-	add_library(${PROJECT_NAME} SHARED "${SERA_SOURCES};${IMGUI_SRCS}")
+	add_library(${PROJECT_NAME} SHARED "${SERA_SOURCES}")
 	
 else()
-	add_library(${PROJECT_NAME} "${SERA_SOURCES};${IMGUI_SRCS}")
+	add_library(${PROJECT_NAME} "${SERA_SOURCES}")
 endif()
 
-target_link_libraries("${PROJECT_NAME}" PUBLIC glfw 
-	spdlog 
-	glm 
-	Diligent-GraphicsEngine)
+set_target_properties(Sera PROPERTIES CXX_STANDARD 17 CXX_STANDARD_REQUIRED YES)
+target_compile_features(Sera PUBLIC cxx_std_14)
+
 
 target_include_directories("${PROJECT_NAME}" 
 	PUBLIC
@@ -44,9 +43,38 @@ target_include_directories("${PROJECT_NAME}"
 	"${CMAKE_SOURCE_DIR}/vendor/glm"
 	"${CMAKE_SOURCE_DIR}/vendor/spdlog/include"
 	"${CMAKE_SOURCE_DIR}/vendor/stb"
-	"${CMAKE_SOURCE_DIR}/vendor/DiligentCore"
+	"${CMAKE_SOURCE_DIR}/vendor/Diligent/DiligentCore"
 )
-message("Diligent inclde dir : ${CMAKE_SOURCE_DIR}/vendor/DiligentCore")
+
+target_compile_definitions(Sera PRIVATE UNICODE)
+
+target_compile_definitions(Sera PRIVATE ENGINE_DLL=1)
+target_link_libraries("${PROJECT_NAME}" PUBLIC 
+	glfw 
+	spdlog 
+	glm 
+	Diligent-Common
+	Diligent-GraphicsTools
+)
+
+if(D3D11_SUPPORTED)
+    target_link_libraries(Sera PRIVATE Diligent-GraphicsEngineD3D11-shared)
+endif()
+if(D3D12_SUPPORTED)
+    target_link_libraries(Sera PRIVATE Diligent-GraphicsEngineD3D12-shared)
+endif()
+if(GL_SUPPORTED)
+    target_link_libraries(Sera PRIVATE Diligent-GraphicsEngineOpenGL-shared)
+endif()
+if(VULKAN_SUPPORTED)
+    target_link_libraries(Sera PRIVATE Diligent-GraphicsEngineVk-shared)
+endif()
+if(METAL_SUPPORTED)
+    target_link_libraries(Sera PRIVATE Diligent-GraphicsEngineMetal-shared)
+endif()
+if(PLATFORM_WIN32)
+	copy_required_dlls(Sera)
+endif()
 # automatic shader recompiling with source code
 if(WIN32)
 	add_custom_command(TARGET "${PROJECT_NAME}"
@@ -59,7 +87,7 @@ else()
 	message("DONT FORGET TO COMPILE SHADERS")
 endif()
 
-copy_required_dlls(Sera)
+# copy_required_dlls(Sera)
 
 # Macros for build configs
 add_compile_definitions(

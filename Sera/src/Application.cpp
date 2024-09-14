@@ -1,35 +1,65 @@
+#ifndef ENGINE_DLL
+#define ENGINE_DLL 1
+#endif
+
+#if PLATFORM_WIN32
+#define GLFW_EXPOSE_NATIVE_WIN32 1
+#endif
+
+#if D3D11_SUPPORTED
+#include "Graphics/GraphicsEngineD3D11/interface/EngineFactoryD3D11.h"
+#endif
+#if D3D12_SUPPORTED
+#include "Graphics/GraphicsEngineD3D12/interface/EngineFactoryD3D12.h"
+#endif
+#if GL_SUPPORTED
+#include "Graphics/GraphicsEngineOpenGL/interface/EngineFactoryOpenGL.h"
+#endif
+#if VULKAN_SUPPORTED
+#include "Graphics/GraphicsEngineVulkan/interface/EngineFactoryVk.h"
+#endif
+#if METAL_SUPPORTED
+#include "Graphics/GraphicsEngineMetal/interface/EngineFactoryMtl.h"
+#endif
+
+#ifdef GetObject
+#undef GetObject
+#endif
+#ifdef CreateWindow
+#undef CreateWindow
+#endif
+
 #include "Application.h"
 #include "Log.h"
 
+#include <Common/interface/RefCntAutoPtr.hpp>
+#include "Graphics/GraphicsEngine/interface/RenderDevice.h"
+#include "Graphics/GraphicsEngine/interface/DeviceContext.h"
+#include "Graphics/GraphicsEngine/interface/SwapChain.h"
+
+using namespace Diligent;
+
 #include <GLFW/glfw3.h>
+#include "GLFW/glfw3native.h"
+#ifdef GetObject
+#undef GetObject
+#endif
+#ifdef CreateWindow
+#undef CreateWindow
+#endif
 
 #ifdef _WIN32
-#undef FindResourceA
-
-#define GLFW_EXPOSE_NATIVE_WIN32
-#include <GLFW/glfw3native.h>
-
+// #undef FindResourceA
 #ifndef NOMINMAX
 #define NOMINMAX
 #endif
 
 #endif
 
-#include <glm/glm.hpp>
-
 // Emedded font
 #include "ImGui/Roboto-Regular.embed"
 
-#include "Graphics/GraphicsEngineD3D11/interface/EngineFactoryD3D11.h"
-#include "Graphics/GraphicsEngineD3D12/interface/EngineFactoryD3D12.h"
-#include "Graphics/GraphicsEngineOpenGL/interface/EngineFactoryOpenGL.h"
-#include "Graphics/GraphicsEngineVulkan/interface/EngineFactoryVk.h"
-
-#include "Graphics/GraphicsEngine/interface/DeviceContext.h"
-#include "Graphics/GraphicsEngine/interface/RenderDevice.h"
-#include "Graphics/GraphicsEngine/interface/SwapChain.h"
-
-#include <imgui.h>
+// #include <imgui.h>
 
 extern bool g_ApplicationRunning;
 
@@ -49,8 +79,6 @@ extern bool g_ApplicationRunning;
 #define IMGUI_VULKAN_DEBUG_REPORT
 #endif
 
-#include <Common/interface/RefCntAutoPtr.hpp>
-using namespace Diligent;
 static Sera::Application            *s_Instance = nullptr;
 static RefCntAutoPtr<IRenderDevice>  m_pDevice;
 static RefCntAutoPtr<IDeviceContext> m_pImmediateContext;
@@ -225,9 +253,9 @@ namespace Sera {
       glfwPollEvents();
 
       for (auto &layer : m_LayerStack) layer->OnUpdate(m_TimeStep);
-      if (showDemoWindow) {
-        ImGui::ShowDemoWindow(&showDemoWindow);
-      }
+      // if (showDemoWindow) {
+      //   ImGui::ShowDemoWindow(&showDemoWindow);
+      // }
       {
         auto *pRTV = m_pSwapChain->GetCurrentBackBufferRTV();
         auto *pDSV = m_pSwapChain->GetDepthBufferDSV();

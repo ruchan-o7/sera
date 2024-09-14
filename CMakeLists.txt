@@ -7,7 +7,6 @@ set(CMAKE_EXPORT_COMPILE_COMMANDS ON)
 include(cmake/utils.cmake)
 
 option(BUILD_SERA_DLL OFF)
-add_compile_definitions(ENGINE_DLL=1)
 # if(CMAKE_SYSTEM_NAME STREQUAL "Windows")
 # 	add_compile_definitions(PLATFORM_WIN32=1)
 # endif()
