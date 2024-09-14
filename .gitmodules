@@ -17,3 +17,6 @@
 [submodule "vendor/Diligent/DiligentCore"]
 	path = vendor/Diligent/DiligentCore
 	url = https://github.com/DiligentGraphics/DiligentCore.git
+[submodule "vendor/Diligent/DiligentTools"]
+	path = vendor/Diligent/DiligentTools
+	url = https://github.com/DiligentGraphics/DiligentTools.git
