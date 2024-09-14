@@ -29,6 +29,8 @@
 #include "Graphics/GraphicsEngine/interface/RenderDevice.h"
 #include "Graphics/GraphicsEngine/interface/SwapChain.h"
 
+#include <imgui.h>
+
 extern bool g_ApplicationRunning;
 
 // [Win32] Our example includes a copy of glfw3.lib pre-compiled with VS2010 to
@@ -214,8 +216,8 @@ namespace Sera {
 
     g_ApplicationRunning = false;
   }
-
-  void Application::Run() {
+  static bool showDemoWindow = true;
+  void        Application::Run() {
     m_Running = true;
 
     // Main loop
@@ -223,6 +225,9 @@ namespace Sera {
       glfwPollEvents();
 
       for (auto &layer : m_LayerStack) layer->OnUpdate(m_TimeStep);
+      if (showDemoWindow) {
+        ImGui::ShowDemoWindow(&showDemoWindow);
+      }
       {
         auto *pRTV = m_pSwapChain->GetCurrentBackBufferRTV();
         auto *pDSV = m_pSwapChain->GetDepthBufferDSV();

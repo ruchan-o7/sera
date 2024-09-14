@@ -25,9 +25,10 @@ set(IMGUI_BACKEND
 
 if(BUILD_SERA_DLL)
 	message("${PROJECT_NAME} building as shared library")
-	add_library(${PROJECT_NAME} SHARED "${SERA_SOURCES}")
+	add_library(${PROJECT_NAME} SHARED "${SERA_SOURCES};${IMGUI_SRCS}")
+	
 else()
-	add_library(${PROJECT_NAME} "${SERA_SOURCES}")
+	add_library(${PROJECT_NAME} "${SERA_SOURCES};${IMGUI_SRCS}")
 endif()
 
 target_link_libraries("${PROJECT_NAME}" PUBLIC glfw 
