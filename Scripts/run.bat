@@ -1,2 +1,2 @@
 pushd ..
-.\build\SeraApp\SeraApp.exe
+.\build\SeraApp\Debug\SeraApp.exe
