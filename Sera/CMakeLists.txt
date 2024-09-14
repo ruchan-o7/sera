@@ -10,25 +10,13 @@ file(GLOB_RECURSE
 		src/*.cpp
 		src/Input/*.cpp
 )
-# set(IMGUI_DIR "${CMAKE_SOURCE_DIR}/vendor/imgui")
-# set(IMGUI_SRCS 
-# 	"${IMGUI_DIR}/imgui.cpp"
-# 	"${IMGUI_DIR}/imgui_demo.cpp"
-# 	"${IMGUI_DIR}/imgui_draw.cpp"
-# 	"${IMGUI_DIR}/imgui_tables.cpp"
-# 	"${IMGUI_DIR}/imgui_widgets.cpp"
-# )
-# set(IMGUI_BACKEND 
-# 	"${IMGUI_DIR}/backends/imgui_impl_glfw.cpp"
-# 	"${IMGUI_DIR}/backends/imgui_impl_vulkan.cpp"
-# )
 
 if(BUILD_SERA_DLL)
 	message("${PROJECT_NAME} building as shared library")
 	add_library(${PROJECT_NAME} SHARED "${SERA_SOURCES}")
 	
 else()
-	add_library(${PROJECT_NAME} "${SERA_SOURCES}")
+	add_library(${PROJECT_NAME} "${SERA_SOURCES};src/imgui_demo.cpp")
 endif()
 
 set_target_properties(Sera PROPERTIES CXX_STANDARD 17 CXX_STANDARD_REQUIRED YES)
@@ -38,12 +26,13 @@ target_compile_features(Sera PUBLIC cxx_std_14)
 target_include_directories("${PROJECT_NAME}" 
 	PUBLIC
 	"include/Sera"
-	"${IMGUI_DIR}/" 
 	"${CMAKE_SOURCE_DIR}/vendor/glfw/include"
 	"${CMAKE_SOURCE_DIR}/vendor/glm"
 	"${CMAKE_SOURCE_DIR}/vendor/spdlog/include"
 	"${CMAKE_SOURCE_DIR}/vendor/stb"
 	"${CMAKE_SOURCE_DIR}/vendor/Diligent/DiligentCore"
+	"${CMAKE_SOURCE_DIR}/vendor/Diligent/DiligentTools/ThirdParty/imgui"
+	"${CMAKE_SOURCE_DIR}/vendor/Diligent/DiligentTools/Imgui/interface"
 )
 
 target_compile_definitions(Sera PRIVATE UNICODE)
@@ -55,6 +44,7 @@ target_link_libraries("${PROJECT_NAME}" PUBLIC
 	glm 
 	Diligent-Common
 	Diligent-GraphicsTools
+	Diligent-Imgui
 )
 
 if(D3D11_SUPPORTED)

@@ -36,6 +36,7 @@
 #include "Graphics/GraphicsEngine/interface/RenderDevice.h"
 #include "Graphics/GraphicsEngine/interface/DeviceContext.h"
 #include "Graphics/GraphicsEngine/interface/SwapChain.h"
+#include <ImGuiImplWin32.hpp>
 
 using namespace Diligent;
 
@@ -58,6 +59,7 @@ using namespace Diligent;
 
 // Emedded font
 #include "ImGui/Roboto-Regular.embed"
+#include <imgui.h>
 
 // #include <imgui.h>
 
@@ -79,11 +81,12 @@ extern bool g_ApplicationRunning;
 #define IMGUI_VULKAN_DEBUG_REPORT
 #endif
 
-static Sera::Application            *s_Instance = nullptr;
-static RefCntAutoPtr<IRenderDevice>  m_pDevice;
-static RefCntAutoPtr<IDeviceContext> m_pImmediateContext;
-static RefCntAutoPtr<ISwapChain>     m_pSwapChain;
-static RefCntAutoPtr<IPipelineState> m_pPSO;
+static Sera::Application                 *s_Instance = nullptr;
+static RefCntAutoPtr<IRenderDevice>       m_pDevice;
+static RefCntAutoPtr<IDeviceContext>      m_pImmediateContext;
+static RefCntAutoPtr<ISwapChain>          m_pSwapChain;
+static RefCntAutoPtr<IPipelineState>      m_pPSO;
+static std::unique_ptr<ImGuiImplDiligent> m_pImGui;
 
 static const char *VSSource = R"(
 struct PSInput 
@@ -190,6 +193,8 @@ static void InitializeDiligentEngine(GLFWwindow *window) {
   PSOCreateInfo.pVS = pVS;
   PSOCreateInfo.pPS = pPS;
   m_pDevice->CreateGraphicsPipelineState(PSOCreateInfo, &m_pPSO);
+  m_pImGui =
+      ImGuiImplWin32::Create(ImGuiDiligentCreateInfo{m_pDevice, SCDesc}, hWnd);
 }
 
 namespace Sera {
@@ -253,9 +258,13 @@ namespace Sera {
       glfwPollEvents();
 
       for (auto &layer : m_LayerStack) layer->OnUpdate(m_TimeStep);
-      // if (showDemoWindow) {
-      //   ImGui::ShowDemoWindow(&showDemoWindow);
-      // }
+
+      const auto desc = m_pSwapChain->GetDesc();
+      m_pImGui->NewFrame(desc.Width, desc.Height, desc.PreTransform);
+
+      if (showDemoWindow) {
+        ImGui::ShowDemoWindow(&showDemoWindow);
+      }
       {
         auto *pRTV = m_pSwapChain->GetCurrentBackBufferRTV();
         auto *pDSV = m_pSwapChain->GetDepthBufferDSV();
@@ -272,6 +281,8 @@ namespace Sera {
         drawAttrs.NumVertices = 3;  // Render 3 vertices
         m_pImmediateContext->Draw(drawAttrs);
       }
+
+      m_pImGui->Render(m_pImmediateContext);
       m_pSwapChain->Present();
 
       float time      = GetTime();
