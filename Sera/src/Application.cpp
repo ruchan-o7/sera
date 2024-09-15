@@ -260,6 +260,12 @@ namespace Sera {
         io.MouseWheelH += (float) xOffset;
         io.MouseWheel += (float) yOffset;
         });
+    glfwSetCharCallback(m_WindowHandle, [](GLFWwindow* window, unsigned int c) {
+        ImGuiIO& io = ImGui::GetIO();
+        if (c > 0 && c < 0x10000)
+            io.AddInputCharacter(c);
+        });
+
   }
 
   void Application::Shutdown() {
