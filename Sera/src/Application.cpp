@@ -233,8 +233,10 @@ namespace Sera {
     m_WindowHandle =
         glfwCreateWindow(m_Specification.Width, m_Specification.Height,
                          m_Specification.Name.c_str(), nullptr, nullptr);
-    // TODO: Fix this for different OS
     InitializeDiligentEngine(m_WindowHandle);
+    glfwSetFramebufferSizeCallback(m_WindowHandle,[](GLFWwindow* window,int width,int heigth){
+        m_pSwapChain->Resize(width,heigth);
+        });
   }
 
   void Application::Shutdown() {
