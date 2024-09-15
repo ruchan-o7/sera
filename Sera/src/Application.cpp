@@ -237,6 +237,31 @@ namespace Sera {
     glfwSetFramebufferSizeCallback(m_WindowHandle,[](GLFWwindow* window,int width,int heigth){
         m_pSwapChain->Resize(width,heigth);
         });
+    glfwSetMouseButtonCallback(m_WindowHandle, [](GLFWwindow* w, int button, int action, int mods) {
+        ImGuiIO& io = ImGui::GetIO();
+        if (action == GLFW_PRESS)
+            io.MouseDown[button] = true;
+        if (action == GLFW_RELEASE)
+            io.MouseDown[button] = false;
+        });
+    glfwSetKeyCallback(m_WindowHandle, [](GLFWwindow* w, int key, int scancode, int action, int mods) {
+        ImGuiIO& io = ImGui::GetIO();
+        if (action == GLFW_PRESS)
+            io.KeysDown[key] = true;
+        else if (action == GLFW_RELEASE)
+            io.KeysDown[key] = false;
+
+        io.KeyCtrl = ( mods & GLFW_MOD_CONTROL ) != 0;
+        io.KeyShift = ( mods & GLFW_MOD_SHIFT ) != 0;
+        io.KeyAlt = ( mods & GLFW_MOD_ALT ) != 0;
+        io.KeySuper = ( mods & GLFW_MOD_SUPER ) != 0;
+
+        });
+    glfwSetScrollCallback(m_WindowHandle, [](GLFWwindow* window, double xOffset,double yOffset) {
+        ImGuiIO& io = ImGui::GetIO();
+        io.MouseWheelH += (float) xOffset;
+        io.MouseWheel += (float) yOffset;
+        });
   }
 
   void Application::Shutdown() {
