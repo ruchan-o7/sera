@@ -11,12 +11,18 @@ file(GLOB_RECURSE
 		src/Input/*.cpp
 )
 
+file(GLOB_RECURSE
+	SERA_HEADERS
+		include/*.h
+		include/Input/*.h
+)
+
 if(BUILD_SERA_DLL)
 	message("${PROJECT_NAME} building as shared library")
-	add_library(${PROJECT_NAME} SHARED "${SERA_SOURCES}")
+	add_library(${PROJECT_NAME} SHARED "${SERA_SOURCES};${SERA_HEADERS}")
 	
 else()
-	add_library(${PROJECT_NAME} "${SERA_SOURCES};src/imgui_demo.cpp")
+	add_library(${PROJECT_NAME} "${SERA_SOURCES};${SERA_HEADERS};src/imgui_demo.cpp")
 endif()
 
 set_target_properties(Sera PROPERTIES CXX_STANDARD 17 CXX_STANDARD_REQUIRED YES)
