@@ -224,16 +224,14 @@ namespace Sera {
 
     glfwWindowHint(GLFW_CLIENT_API, GLFW_NO_API);
 
-    // Setup Vulkan
-    if (!glfwVulkanSupported()) {
-      SR_CORE_CRITICAL("GLFW: Vulkan not supported");
-      exit(-1);
-      return;
-    }
     m_WindowHandle =
         glfwCreateWindow(m_Specification.Width, m_Specification.Height,
                          m_Specification.Name.c_str(), nullptr, nullptr);
+
+    glfwSetWindowUserPointer(m_WindowHandle, this);
+
     InitializeDiligentEngine(m_WindowHandle);
+
     glfwSetFramebufferSizeCallback(m_WindowHandle,[](GLFWwindow* window,int width,int heigth){
         m_pSwapChain->Resize(width,heigth);
         });
